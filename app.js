@@ -3,12 +3,20 @@
  * Each agent has its own workstation area with desk, monitor, and activity
  */
 
-const API_BASE = 'http://localhost:5295/api/v1';
+const NEXUS_URL = 'http://localhost:5000';
 
 // ============ State ============
+let activeServers = [];
+let serverOffsets = new Map(); // server.id -> x offset
+
 let agents = [];
 let missions = [];
 let browserInstances = [];
+
+// ============ Multiplayer (WebSockets) ============
+let ws;
+const myViewerId = 'viewer-' + Math.random().toString(36).substr(2, 9);
+const otherViewers = new Map(); // id -> Mesh
 
 // 3D World
 let scene, camera, renderer, controls;
@@ -18,9 +26,9 @@ let groundPlane;
 let hoveredAgent = null;
 let clock;
 
-// Landmark Interactives
-let energyCube;
-let repairArm = { base: null, segment1: null, segment2: null, joint: null };
+// Landmark Interactives arrays (for multiple buildings)
+let energyCubes = [];
+let repairArms = [];
 
 // Layout config — workstation positions arranged in zones
 const WORKSTATION_LAYOUTS = [
@@ -73,7 +81,17 @@ function initWorld() {
 
     setupLighting();
     setupGround();
-    setupEnvironment();
+
+    // Create environment for each server
+    if (activeServers.length === 0) {
+        setupEnvironment(0, "Local Nexus");
+    } else {
+        activeServers.forEach((server, index) => {
+            const offsetX = index * 40; // 40 units apart
+            serverOffsets.set(server.id, offsetX);
+            setupEnvironment(offsetX, server.name);
+        });
+    }
 
     window.addEventListener('resize', onResize);
     canvas.addEventListener('click', onWorldClick);
@@ -91,8 +109,8 @@ function setupLighting() {
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 60;
-    const d = 18;
+    sun.shadow.camera.far = 150; // Increased far plane for wide maps
+    const d = 50; // Increased sun coverage map
     sun.shadow.camera.left = -d;
     sun.shadow.camera.right = d;
     sun.shadow.camera.top = d;
@@ -119,7 +137,8 @@ function setupLighting() {
 
 // ============ Ground ============
 function setupGround() {
-    const groundGeo = new THREE.PlaneGeometry(50, 50);
+    // Huge ground plane to accommodate multiple servers
+    const groundGeo = new THREE.PlaneGeometry(400, 100);
     const groundMat = new THREE.MeshStandardMaterial({ color: 0x10121c, roughness: 0.9, metalness: 0.1 });
     groundPlane = new THREE.Mesh(groundGeo, groundMat);
     groundPlane.rotation.x = -Math.PI / 2;
@@ -127,14 +146,14 @@ function setupGround() {
     scene.add(groundPlane);
 
     // Main grid
-    const grid = new THREE.GridHelper(40, 40, 0x1a1e30, 0x1a1e30);
+    const grid = new THREE.GridHelper(400, 400, 0x1a1e30, 0x1a1e30);
     grid.position.y = 0.01;
     grid.material.opacity = 0.35;
     grid.material.transparent = true;
     scene.add(grid);
 
     // Accent grid
-    const accentGrid = new THREE.GridHelper(40, 8, 0xf43f5e, 0xa855f7);
+    const accentGrid = new THREE.GridHelper(400, 80, 0xf43f5e, 0xa855f7);
     accentGrid.position.y = 0.02;
     accentGrid.material.opacity = 0.06;
     accentGrid.material.transparent = true;
@@ -142,7 +161,11 @@ function setupGround() {
 }
 
 // ============ Environment (buildings, server rack, etc.) ============
-function setupEnvironment() {
+function setupEnvironment(offsetX = 0, serverName = "Unknown Server") {
+    const envGroup = new THREE.Group();
+    envGroup.position.x = offsetX;
+    scene.add(envGroup);
+
     const bldgMat = new THREE.MeshStandardMaterial({ color: 0x161928, roughness: 0.7, metalness: 0.15 });
     const darkMat = new THREE.MeshStandardMaterial({ color: 0x0e1018, roughness: 0.8 });
     const accentMat = new THREE.MeshStandardMaterial({ color: 0xf43f5e, emissive: 0xf43f5e, emissiveIntensity: 0.2, roughness: 0.4 });
@@ -152,7 +175,7 @@ function setupEnvironment() {
     tower.position.set(0, 1.5, 0);
     tower.castShadow = true;
     tower.receiveShadow = true;
-    scene.add(tower);
+    envGroup.add(tower);
 
     // Server lights
     for (let y = 0.5; y < 2.8; y += 0.4) {
@@ -160,11 +183,11 @@ function setupEnvironment() {
             new THREE.MeshBasicMaterial({ color: Math.random() > 0.5 ? 0x22c55e : 0x3b82f6 })
         );
         light.position.set(0.76, y, 0);
-        scene.add(light);
+        envGroup.add(light);
         // Other side
         const light2 = light.clone();
         light2.position.set(-0.76, y + 0.2, 0);
-        scene.add(light2);
+        envGroup.add(light2);
     }
 
     // Tower accent ring
@@ -172,36 +195,35 @@ function setupEnvironment() {
     const ring = new THREE.Mesh(ringGeo, accentMat);
     ring.position.set(0, 3.1, 0);
     ring.rotation.x = Math.PI / 2;
-    scene.add(ring);
+    envGroup.add(ring);
 
-    // Corner structures (Keep only the front ones to avoid blocking stations)
+    // Corner structures
     const corners = [[-12, -12], [12, -12]];
     corners.forEach(([cx, cz]) => {
         const h = 1 + Math.random() * 2;
         const b = new THREE.Mesh(new THREE.BoxGeometry(1.2, h, 1.2), darkMat);
         b.position.set(cx, h / 2, cz);
         b.castShadow = true;
-        scene.add(b);
+        envGroup.add(b);
     });
 
     // Side walls (low)
     [-15, 15].forEach(pos => {
         const wall = new THREE.Mesh(new THREE.BoxGeometry(30, 0.3, 0.15), darkMat);
         wall.position.set(0, 0.15, pos);
-        scene.add(wall);
+        envGroup.add(wall);
         const wall2 = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.3, 30), darkMat);
         wall2.position.set(pos, 0.15, 0);
-        scene.add(wall2);
+        envGroup.add(wall2);
     });
 
-    // Border text signs — "Truong Tuan Com"
+    // Border text signs
     function makeTextTexture(text) {
         const canvas = document.createElement('canvas');
         canvas.width = 1024;
         canvas.height = 128;
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        // Glow
         ctx.shadowColor = '#f43f5e';
         ctx.shadowBlur = 20;
         ctx.font = 'bold 64px Inter, Arial, sans-serif';
@@ -209,7 +231,6 @@ function setupEnvironment() {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-        // Second pass for brightness
         ctx.shadowBlur = 0;
         ctx.fillStyle = 'rgba(255,255,255,0.35)';
         ctx.fillText(text, canvas.width / 2, canvas.height / 2);
@@ -217,29 +238,28 @@ function setupEnvironment() {
         tex.needsUpdate = true;
         return tex;
     }
-    const brandTex = makeTextTexture('TRUONG TUAN COM');
+    const brandTex = makeTextTexture(serverName.toUpperCase());
     const signMat = new THREE.MeshBasicMaterial({ map: brandTex, transparent: true, side: THREE.DoubleSide });
 
     // Place on all 4 walls
-    // Front wall (z = -15)
     const sign1 = new THREE.Mesh(new THREE.PlaneGeometry(8, 1), signMat);
     sign1.position.set(0, 1.2, -14.9);
-    scene.add(sign1);
-    // Back wall (z = 15)
+    envGroup.add(sign1);
+    
     const sign2 = new THREE.Mesh(new THREE.PlaneGeometry(8, 1), signMat);
     sign2.position.set(0, 1.2, 14.9);
     sign2.rotation.y = Math.PI;
-    scene.add(sign2);
-    // Left wall (x = -15)
+    envGroup.add(sign2);
+    
     const sign3 = new THREE.Mesh(new THREE.PlaneGeometry(8, 1), signMat);
     sign3.position.set(-14.9, 1.2, 0);
     sign3.rotation.y = Math.PI / 2;
-    scene.add(sign3);
-    // Right wall (x = 15)
+    envGroup.add(sign3);
+    
     const sign4 = new THREE.Mesh(new THREE.PlaneGeometry(8, 1), signMat);
     sign4.position.set(14.9, 1.2, 0);
     sign4.rotation.y = -Math.PI / 2;
-    scene.add(sign4);
+    envGroup.add(sign4);
 
     // Floating particles
     const pCount = 300;
@@ -252,45 +272,46 @@ function setupEnvironment() {
     }
     pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
     const pMat = new THREE.PointsMaterial({ color: 0xf43f5e, size: 0.04, transparent: true, opacity: 0.4 });
-    scene.add(new THREE.Points(pGeo, pMat));
+    envGroup.add(new THREE.Points(pGeo, pMat));
 
-    // 1. Charging Station (Cyan)
+    // 1. Charging Station
     const chargeStation = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.1, 16), new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.1 }));
     chargeStation.position.set(12, 0.05, 12);
-    scene.add(chargeStation);
+    envGroup.add(chargeStation);
     const chargeLabel = new THREE.PointLight(0x22d3ee, 1.2, 10);
     chargeLabel.position.set(12, 2.5, 12);
-    scene.add(chargeLabel);
+    envGroup.add(chargeLabel);
 
     // Energy Crystal (Octahedron)
-    energyCube = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), new THREE.MeshStandardMaterial({ 
+    const energyCube = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), new THREE.MeshStandardMaterial({ 
         color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 2.5, roughness: 0.0, metalness: 1.0, transparent: true, opacity: 0.9
     }));
     energyCube.position.set(12, 1.5, 12);
-    scene.add(energyCube);
+    envGroup.add(energyCube);
+    energyCubes.push({ mesh: energyCube, offsetX });
     
     // Holographic Base Rings
     for (let j = 1; j <= 2; j++) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2 + j * 0.1, 0.01, 8, 32), new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.4 / j }));
         ring.position.set(12, 0.06, 12);
         ring.rotation.x = Math.PI / 2;
-        scene.add(ring);
+        envGroup.add(ring);
     }
 
-    // 2. Repair Station (Yellow/Orange)
+    // 2. Repair Station
     const repairStation = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.1, 16), new THREE.MeshBasicMaterial({ color: 0xfb7185, transparent: true, opacity: 0.1 }));
     repairStation.position.set(-12, 0.05, 12);
-    scene.add(repairStation);
+    envGroup.add(repairStation);
     const repairLabel = new THREE.PointLight(0xfb7185, 1.2, 10);
     repairLabel.position.set(-12, 2.5, 12);
-    scene.add(repairLabel);
+    envGroup.add(repairLabel);
     
     // Holographic Base Rings
     for (let j = 1; j <= 2; j++) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2 + j * 0.1, 0.01, 8, 32), new THREE.MeshBasicMaterial({ color: 0xfb7185, transparent: true, opacity: 0.4 / j }));
         ring.position.set(-12, 0.06, 12);
         ring.rotation.x = Math.PI / 2;
-        scene.add(ring);
+        envGroup.add(ring);
     }
 
     // Robotic Arm
@@ -326,10 +347,8 @@ function setupEnvironment() {
     headGroup.add(laser);
     joint2.add(headGroup);
 
-    repairArm.base = armGroup;
-    repairArm.segment1 = joint1;
-    repairArm.segment2 = joint2;
-    scene.add(armGroup);
+    envGroup.add(armGroup);
+    repairArms.push({ base: armGroup, segment1: joint1, segment2: joint2, offsetX });
 }
 
 // ============ Workstation Builder ============
@@ -442,12 +461,17 @@ function placeAgentsInWorld() {
 
     if (agents.length === 0) return;
 
-    agents.forEach((agent, i) => {
+    agents.forEach((agent) => {
+        const serverAgents = agents.filter(a => a.serverId === agent.serverId);
+        const i = serverAgents.indexOf(agent);
+        const offsetX = serverOffsets.get(agent.serverId) || 0;
+        
         const layout = WORKSTATION_LAYOUTS[i % WORKSTATION_LAYOUTS.length];
         const agentColor = resolveColor(agent.avatar_color || 'blue');
 
         // Build workstation
-        const ws = buildWorkstation(layout.x, layout.z, layout.rot, agentColor);
+        const wsX = layout.x + offsetX;
+        const ws = buildWorkstation(wsX, layout.z, layout.rot, agentColor);
         scene.add(ws.group);
 
         // Build 3D character
@@ -458,7 +482,7 @@ function placeAgentsInWorld() {
         const localChairPos = new THREE.Vector3(0, 0, 0.55);
         localChairPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), layout.rot);
         character.position.set(
-            layout.x + localChairPos.x,
+            wsX + localChairPos.x,
             0.15,
             layout.z + localChairPos.z
         );
@@ -472,6 +496,7 @@ function placeAgentsInWorld() {
         // Check if agent has active browser
         const isActive = browserInstances.some(bi => {
             if (bi.status !== 'running') return false;
+            if (bi.serverId && bi.serverId !== agent.serverId) return false;
             // Precise match by agent_id
             if (bi.agent_id && bi.agent_id === agent.id) return true;
             // Fallback: match by profile name
@@ -479,13 +504,14 @@ function placeAgentsInWorld() {
         });
 
         character.userData.agentId = agent.id;
+        character.userData.serverId = agent.serverId;
         character.userData.isAgent = true;
         character.userData.baseRotY = layout.rot + Math.PI;
         character.userData.deskPos = character.position.clone();
         
         const hubDist = 2.5 + Math.random() * 0.5;
-        const hubAngle = (i / agents.length) * Math.PI * 2;
-        character.userData.hubPos = new THREE.Vector3(Math.sin(hubAngle) * hubDist, 0.15, Math.cos(hubAngle) * hubDist);
+        const hubAngle = (i / serverAgents.length) * Math.PI * 2;
+        character.userData.hubPos = new THREE.Vector3(offsetX + Math.sin(hubAngle) * hubDist, 0.15, Math.cos(hubAngle) * hubDist);
         character.userData.movementState = isActive ? 'WORKING' : 'IDLE';
         character.userData.lerpFactor = 0;
         character.userData.stateTimer = 0;
@@ -555,7 +581,7 @@ function setScreenActive(screenMesh, color) {
     lineGroup.userData.screenLines = true;
 }
 
-// ============ Update Labels (3D → 2D projection) ============
+// ============ Updates Labels (3D → 2D projection) ============
 function updateLabels() {
     agentWorkstations.forEach(({ mesh, label, isActive }) => {
         const pos = new THREE.Vector3();
@@ -572,10 +598,111 @@ function updateLabels() {
             label.style.display = 'block';
             label.style.left = x + 'px';
             label.style.top = y + 'px';
-            // Show activity indicator
             if (isActive) {
                 label.innerHTML = `<span class="label-name">🟢 ${escapeHtml(label.dataset.name || '')}</span>`;
             }
+        }
+    });
+}
+
+// ============ Multiplayer (WebSockets) ============
+function initMultiplayer() {
+    try {
+        const wsUrl = NEXUS_URL.replace('http', 'ws');
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+            console.log("Connected to Botsjob Nexus WebSocket");
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'viewers_state') {
+                    updateViewers(data.viewers);
+                }
+            } catch (e) {}
+        };
+        
+        // Broadcast my position
+        setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN && camera) {
+                ws.send(JSON.stringify({
+                    type: 'position_update',
+                    id: myViewerId,
+                    x: camera.position.x,
+                    y: camera.position.y,
+                    z: camera.position.z,
+                    rotation: camera.rotation.y
+                }));
+            }
+        }, 100);
+    } catch (e) {
+        console.warn("Could not connect to WebSocket", e);
+    }
+}
+
+function updateViewers(viewersData) {
+    const currentIds = new Set(viewersData.map(v => v.id));
+    
+    // Remove disconnected viewers
+    for (const [id, mesh] of otherViewers.entries()) {
+        if (!currentIds.has(id)) {
+            scene.remove(mesh);
+            otherViewers.delete(id);
+        }
+    }
+
+    // Update or add viewers
+    viewersData.forEach(v => {
+        if (v.id === myViewerId) return;
+
+        let mesh = otherViewers.get(v.id);
+        if (!mesh) {
+            mesh = new THREE.Group();
+            
+            const dome = new THREE.Mesh(
+                new THREE.SphereGeometry(0.3, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2),
+                new THREE.MeshPhysicalMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.6, roughness: 0.1, transmission: 0.9 })
+            );
+            dome.position.y = 0.1;
+            
+            const base = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.5, 0.4, 0.2, 16),
+                new THREE.MeshStandardMaterial({ color: 0x161928, metalness: 0.8 })
+            );
+            
+            const glow = new THREE.PointLight(0x22d3ee, 0.5, 5);
+            
+            mesh.add(dome);
+            mesh.add(base);
+            mesh.add(glow);
+            
+            // Add a label for the viewer
+            const labelGeo = new THREE.PlaneGeometry(2, 0.5);
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#22d3ee';
+            ctx.font = 'bold 36px Inter';
+            ctx.textAlign = 'center';
+            ctx.fillText('Viewer ' + v.id.substring(v.id.length - 4), 128, 48);
+            
+            const tex = new THREE.CanvasTexture(canvas);
+            const labelMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
+            const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+            labelMesh.position.y = 0.8;
+            mesh.add(labelMesh);
+            
+            scene.add(mesh);
+            otherViewers.set(v.id, mesh);
+        }
+        
+        mesh.userData.targetPos = new THREE.Vector3(v.x, v.y, v.z);
+        mesh.userData.targetRot = v.rotation;
+        
+        if (!mesh.position.lengthSq()) {
+            mesh.position.set(v.x, v.y, v.z);
         }
     });
 }
@@ -639,7 +766,8 @@ function animate() {
                 }
             } else if (state === 'AT_STATION') {
                 // Determine rotation: face the center of the station
-                const center = mesh.userData.stationType === 'CHARGING' ? new THREE.Vector3(12, 0.15, 12) : new THREE.Vector3(-12, 0.15, 12);
+                const offsetX = serverOffsets.get(mesh.userData.serverId) || 0;
+                const center = mesh.userData.stationType === 'CHARGING' ? new THREE.Vector3(12 + offsetX, 0.15, 12) : new THREE.Vector3(-12 + offsetX, 0.15, 12);
                 mesh.lookAt(center);
             } else if (state === 'OBSERVING') {
                 if (mesh.userData.observeTarget) {
@@ -667,11 +795,12 @@ function animate() {
             if (state === 'TO_HUB') target = hubPos;
             else if (state === 'TO_STATION') {
                 const sType = mesh.userData.stationType;
-                const base = sType === 'CHARGING' ? new THREE.Vector3(12, 0.15, 12) : new THREE.Vector3(-12, 0.15, 12);
+                const offsetX = serverOffsets.get(mesh.userData.serverId) || 0;
+                const base = sType === 'CHARGING' ? new THREE.Vector3(12 + offsetX, 0.15, 12) : new THREE.Vector3(-12 + offsetX, 0.15, 12);
                 const dir = sType === 'CHARGING' ? new THREE.Vector3(1, 0, 1) : new THREE.Vector3(-1, 0, 1);
                 
                 // Get queue index
-                const inQueue = agentWorkstations.filter(w => w.mesh.userData.movementState === 'TO_STATION' || w.mesh.userData.movementState === 'AT_STATION')
+                const inQueue = agentWorkstations.filter(w => w.mesh.userData.serverId === mesh.userData.serverId && (w.mesh.userData.movementState === 'TO_STATION' || w.mesh.userData.movementState === 'AT_STATION'))
                     .filter(w => w.mesh.userData.stationType === sType)
                     .sort((a, b) => (a.mesh.userData.queueStartTime || 0) - (b.mesh.userData.queueStartTime || 0));
                 
@@ -721,7 +850,8 @@ function animate() {
             // Receiving mission pause
             mesh.position.y = 0.15 + Math.sin(t * 1.5 + phase) * 0.025;
             // Look at central tower
-            const towerPos = new THREE.Vector3(0, 0.15, 0);
+            const offsetX = serverOffsets.get(mesh.userData.serverId) || 0;
+            const towerPos = new THREE.Vector3(offsetX, 0.15, 0);
             mesh.lookAt(towerPos);
 
             if (t > mesh.userData.stateTimer) {
@@ -771,28 +901,37 @@ function animate() {
     });
 
     // Landmark Animations
-    if (energyCube) {
-        energyCube.rotation.y += 0.02;
-        energyCube.rotation.x += 0.01;
-        energyCube.position.y = 1.6 + Math.sin(t * 2) * 0.2;
-    }
-
-    if (repairArm.base) {
-        // Robotic arm logic: move if someone is in repair queue
-        const inRepair = agentWorkstations.filter(w => w.mesh.userData.movementState === 'AT_STATION' && w.mesh.userData.stationType === 'REPAIR')
-            .sort((a, b) => (a.mesh.userData.queueStartTime || 0) - (b.mesh.userData.queueStartTime || 0));
-        
-        if (inRepair.length > 0) {
-            // Animating toward first agent
-            repairArm.segment1.rotation.z = Math.sin(t * 1.5) * 0.4 - 0.3;
-            repairArm.segment2.rotation.z = Math.sin(t * 3) * 0.6 + 0.5;
-            repairArm.base.rotation.y = -Math.PI / 4 + Math.sin(t * 0.5) * 0.2;
-        } else {
-            // Idle arm animation
-            repairArm.segment1.rotation.z = -0.1 + Math.sin(t * 0.5) * 0.05;
-            repairArm.segment2.rotation.z = 0.2 + Math.sin(t * 0.8) * 0.1;
+    energyCubes.forEach(({ mesh }) => {
+        if (mesh) {
+            mesh.rotation.y += 0.02;
+            mesh.rotation.x += 0.01;
+            mesh.position.y = 1.6 + Math.sin(t * 2) * 0.2;
         }
-    }
+    });
+
+    repairArms.forEach(({ base, segment1, segment2, offsetX }) => {
+        if (base) {
+            // Find serverId for this offsetX
+            let serverId = null;
+            for (let [id, val] of serverOffsets.entries()) {
+                if (val === offsetX) { serverId = id; break; }
+            }
+            // Robotic arm logic: move if someone is in repair queue for THIS server
+            const inRepair = agentWorkstations.filter(w => w.mesh.userData.serverId === serverId && w.mesh.userData.movementState === 'AT_STATION' && w.mesh.userData.stationType === 'REPAIR')
+                .sort((a, b) => (a.mesh.userData.queueStartTime || 0) - (b.mesh.userData.queueStartTime || 0));
+            
+            if (inRepair.length > 0) {
+                // Animating toward first agent
+                segment1.rotation.z = Math.sin(t * 1.5) * 0.4 - 0.3;
+                segment2.rotation.z = Math.sin(t * 3) * 0.6 + 0.5;
+                base.rotation.y = -Math.PI / 4 + Math.sin(t * 0.5) * 0.2;
+            } else {
+                // Idle arm animation
+                segment1.rotation.z = -0.1 + Math.sin(t * 0.5) * 0.05;
+                segment2.rotation.z = 0.2 + Math.sin(t * 0.8) * 0.1;
+            }
+        }
+    });
 
     // Animate active screens (flicker effect)
     agentWorkstations.forEach(({ screenMesh, isActive, workstationGroup }) => {
@@ -806,6 +945,20 @@ function animate() {
                     });
                 }
             });
+        }
+    });
+
+    // Lerp viewer avatars
+    otherViewers.forEach(mesh => {
+        if (mesh.userData.targetPos) {
+            mesh.position.lerp(mesh.userData.targetPos, 0.1);
+            
+            // Add floating bob
+            mesh.position.y += Math.sin(t * 3) * 0.05 - 0.025;
+            // Add spin to the base
+            mesh.children[1].rotation.y += 0.05;
+            // Always face camera for label
+            if (mesh.children[3]) mesh.children[3].lookAt(camera.position);
         }
     });
 
@@ -893,31 +1046,51 @@ function onWorldMouseMove(event) {
 }
 
 // ============ API Layer ============
-async function api(path, method = 'GET', body = null) {
+async function api(path, baseUrl = null, method = 'GET', body = null) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
     if (body) opts.body = JSON.stringify(body);
     try {
-        const res = await fetch(`${API_BASE}${path}`, opts);
+        const url = baseUrl ? `${baseUrl}/api/v1${path}` : `${NEXUS_URL}${path}`;
+        const res = await fetch(url, opts);
         if (!res.ok) {
             const err = await res.json().catch(() => ({ detail: res.statusText }));
             throw new Error(err.detail || res.statusText);
         }
         return res.json();
     } catch (e) {
-        if (e.message.includes('Failed to fetch')) {
-            throw new Error('Cannot connect to TubeCreate API. Is the app running?');
-        }
+        console.warn(`API Error for ${baseUrl || NEXUS_URL}${path}:`, e.message);
         throw e;
+    }
+}
+
+// ============ Data Fetching ============
+async function fetchServers() {
+    try {
+        const data = await api('/servers');
+        activeServers = data.servers || [];
+    } catch (e) {
+        showToast('⚠️ Could not connect to Botsjob Nexus Registry', 'error');
     }
 }
 
 // ============ Data Fetching ============
 async function fetchAgents() {
     try {
-        const data = await api('/agents');
-        const newAgents = data.agents || [];
+        let newAgents = [];
+        if (activeServers.length === 0) {
+            try {
+                const data = await api('/agents', 'http://localhost:5295');
+                newAgents = (data.agents || []).map(a => ({ ...a, serverId: 'local' }));
+            } catch (e) {}
+        } else {
+            for (const server of activeServers) {
+                try {
+                    const data = await api('/agents', server.url);
+                    newAgents.push(...(data.agents || []).map(a => ({ ...a, serverId: server.id })));
+                } catch (e) { console.warn(`Agents fetch failed for ${server.name}`); }
+            }
+        }
         
-        // Only re-place if counts or IDs changed
         const currentIds = agents.map(a => a.id).sort().join(',');
         const newIds = newAgents.map(a => a.id).sort().join(',');
         
@@ -925,7 +1098,6 @@ async function fetchAgents() {
             agents = newAgents;
             placeAgentsInWorld();
         } else {
-            // Just update local objects (in case names/colors changed)
             agents = newAgents;
             agentWorkstations.forEach(ws => {
                 const refreshed = agents.find(a => a.id === ws.agent.id);
@@ -934,28 +1106,53 @@ async function fetchAgents() {
         }
         updateStats();
     } catch (e) {
-        showToast('⚠️ ' + e.message, 'error');
+        showToast('⚠️ Agent fetch error', 'error');
     }
 }
 
 async function fetchMissions() {
     try {
-        const data = await api('/missions');
-        missions = data.missions || [];
+        let newMissions = [];
+        if (activeServers.length === 0) {
+            try {
+                const data = await api('/missions', 'http://localhost:5295');
+                newMissions = (data.missions || []).map(m => ({ ...m, serverId: 'local' }));
+            } catch (e) {}
+        } else {
+            for (const server of activeServers) {
+                try {
+                    const data = await api('/missions', server.url);
+                    newMissions.push(...(data.missions || []).map(m => ({ ...m, serverId: server.id })));
+                } catch (e) {}
+            }
+        }
+        missions = newMissions;
         renderMissions();
         updateStats();
-    } catch (e) { console.warn('Missions fetch failed:', e.message); }
+    } catch (e) {}
 }
 
 async function fetchBrowserInstances() {
     try {
-        const data = await api('/browser/list');
-        browserInstances = data.instances || [];
+        let newInstances = [];
+        if (activeServers.length === 0) {
+            try {
+                const data = await api('/browser/list', 'http://localhost:5295');
+                newInstances = (data.instances || []).map(i => ({ ...i, serverId: 'local' }));
+            } catch (e) {}
+        } else {
+            for (const server of activeServers) {
+                try {
+                    const data = await api('/browser/list', server.url);
+                    newInstances.push(...(data.instances || []).map(i => ({ ...i, serverId: server.id })));
+                } catch (e) {}
+            }
+        }
+        browserInstances = newInstances;
         renderBrowserInstances();
         updateStats();
-        // Re-check activity status
         updateAgentActivity();
-    } catch (e) { console.warn('Browser instances fetch failed:', e.message); }
+    } catch (e) {}
 }
 
 function updateAgentActivity() {
@@ -1135,22 +1332,48 @@ function switchTab(btn, tabId) {
 function toggleSidebar() { document.getElementById('hud-sidebar').classList.toggle('collapsed'); }
 
 // ============ Actions ============
+function getServerUrl(serverId) {
+    if (serverId === 'local') return 'http://localhost:5295';
+    const server = activeServers.find(s => s.id === serverId);
+    return server ? server.url : null;
+}
+
 async function deleteAgent(agentId) {
     if (!confirm('Delete this agent?')) return;
-    try { await api(`/agents/${agentId}`, 'DELETE'); showToast('Agent deleted', 'success'); closeModal(); fetchAgents(); }
+    const agent = agents.find(a => a.id === agentId);
+    if (!agent) return;
+    const url = getServerUrl(agent.serverId);
+    if (!url) return showToast('Server offline', 'error');
+    
+    try { await api(`/agents/${agentId}`, url, 'DELETE'); showToast('Agent deleted', 'success'); closeModal(); fetchAgents(); }
     catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 async function resetMission(missionId) {
-    try { await api(`/missions/${missionId}/reset`, 'POST'); showToast('Mission reset', 'success'); fetchMissions(); }
+    const mission = missions.find(m => m.id === missionId);
+    if (!mission) return;
+    const url = getServerUrl(mission.serverId);
+    if (!url) return showToast('Server offline', 'error');
+
+    try { await api(`/missions/${missionId}/reset`, url, 'POST'); showToast('Mission reset', 'success'); fetchMissions(); }
     catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 async function deleteMission(missionId) {
     if (!confirm('Delete this mission?')) return;
-    try { await api(`/missions/${missionId}`, 'DELETE'); showToast('Mission deleted', 'success'); fetchMissions(); }
+    const mission = missions.find(m => m.id === missionId);
+    if (!mission) return;
+    const url = getServerUrl(mission.serverId);
+    if (!url) return showToast('Server offline', 'error');
+
+    try { await api(`/missions/${missionId}`, url, 'DELETE'); showToast('Mission deleted', 'success'); fetchMissions(); }
     catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 async function terminateBrowser(instanceId) {
-    try { await api(`/browser/terminate/${instanceId}`, 'POST'); showToast('Browser terminated', 'success'); fetchBrowserInstances(); }
+    const instance = browserInstances.find(i => i.instance_id === instanceId);
+    if (!instance) return;
+    const url = getServerUrl(instance.serverId);
+    if (!url) return showToast('Server offline', 'error');
+
+    try { await api(`/browser/terminate/${instanceId}`, url, 'POST'); showToast('Browser terminated', 'success'); fetchBrowserInstances(); }
     catch (e) { showToast('Error: ' + e.message, 'error'); }
 }
 
@@ -1169,15 +1392,27 @@ function showToast(msg, type = 'info') {
 async function checkHealth() {
     const dot = document.getElementById('status-dot');
     const text = document.getElementById('status-text');
-    try { await api('/health'); dot.classList.add('online'); dot.classList.remove('offline'); text.textContent = 'Connected'; }
-    catch { dot.classList.add('offline'); dot.classList.remove('online'); text.textContent = 'Disconnected'; }
+    try { 
+        await api('/health'); // Pings Nexus
+        dot.classList.add('online'); dot.classList.remove('offline'); 
+        text.textContent = `Nexus: ${activeServers.length} Servers`; 
+    }
+    catch { 
+        dot.classList.add('offline'); dot.classList.remove('online'); 
+        text.textContent = 'Nexus Disconnected'; 
+    }
 }
 
 // ============ Init ============
 document.addEventListener('DOMContentLoaded', async () => {
+    await fetchServers();
     initWorld();
+    initMultiplayer();
     await checkHealth();
     await refreshAll();
+    
+    // Fast polling for active browsers
     setInterval(async () => { await fetchBrowserInstances(); await checkHealth(); }, 2000);
-    setInterval(() => refreshAll(), 30000);
+    // Slow polling for full refresh
+    setInterval(async () => { await fetchServers(); await refreshAll(); }, 30000);
 });
