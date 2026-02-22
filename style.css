@@ -1,0 +1,429 @@
+/* ============ BotJob 3D Game World — HUD + Overlay Theme ============ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg-hud: rgba(10, 12, 20, 0.85);
+    --bg-panel: rgba(18, 20, 32, 0.92);
+    --bg-card: rgba(26, 29, 46, 0.9);
+    --border: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.15);
+    --text-primary: #e8eaf0;
+    --text-secondary: #8b8fa4;
+    --text-muted: #555872;
+    --accent: #f43f5e;
+    --accent-glow: rgba(244, 63, 94, 0.3);
+    --accent-secondary: #a855f7;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #3b82f6;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 4px 24px rgba(0,0,0,0.5);
+    --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: #000;
+    color: var(--text-primary);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* ============ Full-screen 3D Canvas ============ */
+#world-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+}
+
+/* ============ HUD Overlay ============ */
+.hud {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.hud > * { pointer-events: auto; }
+
+/* ============ Top Bar ============ */
+.hud-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 52px;
+    background: var(--bg-hud);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+}
+
+.hud-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.hud-logo {
+    width: 30px;
+    height: 30px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    box-shadow: 0 2px 10px var(--accent-glow);
+}
+
+.hud-title {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+
+.hud-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 12px;
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: var(--transition);
+}
+.status-dot.online { background: var(--success); box-shadow: 0 0 8px rgba(34,197,94,0.5); }
+.status-dot.offline { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,0.4); }
+
+.hud-stats {
+    display: flex;
+    gap: 6px;
+}
+
+.stat-chip {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.stat-label { color: var(--text-muted); font-weight: 400; }
+.stat-val { color: var(--text-primary); font-weight: 600; }
+.active-stat .stat-val { color: var(--success); }
+
+/* ============ Agent Tooltip (hover label in 3D world) ============ */
+.agent-tooltip {
+    position: fixed;
+    z-index: 20;
+    background: var(--bg-hud);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-hover);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    pointer-events: none;
+    transform: translateX(-50%);
+    box-shadow: var(--shadow);
+}
+
+#tooltip-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+#tooltip-desc {
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+/* ============ Right Sidebar ============ */
+.hud-sidebar {
+    position: absolute;
+    top: 60px;
+    right: 8px;
+    bottom: 40px;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sidebar-toggle {
+    display: none; /* Show on mobile */
+    cursor: pointer;
+}
+
+.sidebar-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    height: 100%;
+}
+
+.panel-block {
+    background: var(--bg-panel);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.panel-block.flex-grow { flex: 1; min-height: 0; }
+
+.panel-header {
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.panel-count {
+    background: rgba(255,255,255,0.06);
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.panel-body {
+    padding: 8px;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.panel-body::-webkit-scrollbar { width: 4px; }
+.panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+
+/* ============ Mission Item ============ */
+.mission-item {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    position: relative;
+}
+
+.mission-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.mission-title { font-size: 11px; font-weight: 500; }
+
+.mission-status-badge {
+    font-size: 8px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+.status-pending .mission-status-badge { background: rgba(245,158,11,0.15); color: var(--warning); }
+.status-running .mission-status-badge { background: rgba(59,130,246,0.15); color: var(--info); }
+.status-done .mission-status-badge { background: rgba(34,197,94,0.15); color: var(--success); }
+.status-failed .mission-status-badge { background: rgba(239,68,68,0.15); color: var(--danger); }
+
+.mission-progress-bar { height: 2px; background: rgba(255,255,255,0.05); border-radius: 1px; margin-bottom: 4px; overflow: hidden; }
+.mission-progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-secondary)); border-radius: 1px; transition: width 0.5s ease; }
+.mission-meta { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-muted); }
+.mission-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0; transition: var(--transition); }
+.mission-item:hover .mission-actions { opacity: 1; }
+
+/* ============ Browser Item ============ */
+.browser-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.browser-indicator { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px rgba(34,197,94,0.4); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+.browser-info { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.browser-profile { font-size: 11px; font-weight: 500; }
+.browser-action { font-size: 9px; color: var(--text-muted); }
+
+/* ============ Buttons ============ */
+.btn-sm {
+    width: 20px; height: 20px; border-radius: 4px;
+    border: 1px solid var(--border); background: rgba(0,0,0,0.3);
+    color: var(--text-secondary); cursor: pointer; font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
+    transition: var(--transition); padding: 0;
+}
+.btn-sm:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.btn-terminate:hover { color: var(--danger); }
+.btn-delete:hover { color: var(--danger); }
+.btn-reset:hover { color: var(--warning); }
+
+/* ============ Modal ============ */
+.modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
+}
+.modal-overlay.open { opacity: 1; pointer-events: all; }
+
+.modal-dialog {
+    background: var(--bg-panel); backdrop-filter: blur(20px);
+    border: 1px solid var(--border); border-radius: 16px;
+    width: 90%; max-width: 680px; max-height: 85vh; overflow-y: auto;
+    box-shadow: 0 8px 48px rgba(0,0,0,0.7); animation: modalIn 0.3s ease;
+}
+.modal-dialog::-webkit-scrollbar { width: 6px; }
+.modal-dialog::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+
+@keyframes modalIn {
+    from { transform: scale(0.95) translateY(10px); opacity: 0; }
+    to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.modal-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 20px 24px; border-bottom: 1px solid var(--border);
+}
+.modal-header-left { display: flex; align-items: center; gap: 16px; }
+.modal-header-left canvas { border-radius: 10px; }
+.modal-header-left h2 { font-size: 18px; font-weight: 600; }
+.modal-desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+.modal-close {
+    width: 30px; height: 30px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-secondary); cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: var(--transition);
+}
+.modal-close:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+
+.modal-tabs { display: flex; padding: 0 24px; border-bottom: 1px solid var(--border); }
+.tab {
+    padding: 10px 14px; font-size: 12px; font-weight: 500; color: var(--text-secondary);
+    background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent;
+    transition: var(--transition); font-family: inherit;
+}
+.tab:hover { color: var(--text-primary); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-panel { display: none; padding: 20px 24px; }
+.tab-panel.active { display: block; }
+
+.detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.detail-item { display: flex; flex-direction: column; gap: 3px; }
+.detail-item label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+.detail-item span { font-size: 13px; color: var(--text-primary); }
+
+.color-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 4px; font-size: 11px !important; color: white !important; }
+.detail-section { margin-bottom: 16px; }
+.detail-section h4 { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+
+.code-block {
+    background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px; font-size: 11px; font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    color: var(--text-secondary); overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    max-height: 180px; overflow-y: auto;
+}
+
+.modal-footer { padding: 14px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+
+.btn { padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: rgba(255,255,255,0.05); color: var(--text-primary); font-size: 12px; font-weight: 500; cursor: pointer; transition: var(--transition); font-family: inherit; }
+.btn:hover { border-color: var(--border-hover); background: rgba(255,255,255,0.08); }
+.btn-danger { border-color: var(--danger); color: var(--danger); background: transparent; }
+.btn-danger:hover { background: rgba(239,68,68,0.1); }
+
+/* ============ Bottom Hint ============ */
+.hud-bottom-hint {
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    background: var(--bg-hud);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 18px;
+    font-size: 11px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+/* ============ Empty States ============ */
+.empty-state-sm { text-align: center; padding: 16px; color: var(--text-muted); font-size: 11px; }
+
+/* ============ Agent Name Label (3D overlay) ============ */
+.agent-label-3d {
+    position: absolute;
+    z-index: 15;
+    text-align: center;
+    pointer-events: none;
+    transform: translateX(-50%);
+}
+.agent-label-3d .label-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+    white-space: nowrap;
+}
+
+/* ============ Toast ============ */
+#toast-container { position: fixed; top: 60px; right: 16px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+    padding: 8px 14px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 500;
+    color: white; box-shadow: var(--shadow); transform: translateX(120%);
+    transition: transform 0.3s ease; max-width: 280px;
+}
+.toast.visible { transform: translateX(0); }
+.toast-success { background: linear-gradient(135deg, #16a34a, #15803d); }
+.toast-error { background: linear-gradient(135deg, #dc2626, #b91c1c); }
+.toast-info { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
+
+@media (max-width: 768px) {
+    .hud-sidebar { width: 220px; }
+    .hud-stats { display: none; }
+}

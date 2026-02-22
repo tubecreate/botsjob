@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BotJob — 3D Agent World</title>
+    <meta name="description" content="Multi-agent management in a 3D game world">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <!-- Full-screen 3D World -->
+    <canvas id="world-canvas"></canvas>
+
+    <!-- HUD Overlay -->
+    <div class="hud">
+        <!-- Top bar -->
+        <div class="hud-top">
+            <div class="hud-brand">
+                <div class="hud-logo">🤖</div>
+                <span class="hud-title">BotJob</span>
+                <div class="hud-status">
+                    <div class="status-dot" id="status-dot"></div>
+                    <span id="status-text">Connecting...</span>
+                </div>
+            </div>
+            <div class="hud-stats">
+                <div class="stat-chip"><span class="stat-label">Agents</span><span class="stat-val" id="stat-agents">0</span></div>
+                <div class="stat-chip"><span class="stat-label">Missions</span><span class="stat-val" id="stat-missions">0</span></div>
+                <div class="stat-chip active-stat"><span class="stat-label">Active</span><span class="stat-val" id="stat-active">0</span></div>
+                <div class="stat-chip"><span class="stat-label">Pending</span><span class="stat-val" id="stat-pending">0</span></div>
+            </div>
+        </div>
+
+        <!-- Agent Name Tooltip (appears on hover) -->
+        <div class="agent-tooltip" id="agent-tooltip" style="display:none;">
+            <span id="tooltip-name"></span>
+            <span id="tooltip-desc"></span>
+        </div>
+
+        <!-- Right Sidebar Panel (Missions + Browsers) -->
+        <div class="hud-sidebar" id="hud-sidebar">
+            <div class="sidebar-toggle" onclick="toggleSidebar()">☰</div>
+            <div class="sidebar-content">
+                <div class="panel-block">
+                    <div class="panel-header">
+                        <span>🌐 Active Browsers</span>
+                        <span class="panel-count" id="browser-count">0</span>
+                    </div>
+                    <div class="panel-body" id="browser-list"></div>
+                </div>
+                <div class="panel-block flex-grow">
+                    <div class="panel-header">
+                        <span>🎯 Missions</span>
+                        <span class="panel-count" id="mission-count">0</span>
+                    </div>
+                    <div class="panel-body" id="missions-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Agent Detail Modal -->
+    <div class="modal-overlay" id="agent-modal" onclick="if(event.target===this) closeModal()">
+        <div class="modal-dialog" id="modal-content"></div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container"></div>
+
+    <!-- Bottom Instructions -->
+    <div class="hud-bottom-hint">
+        <span>🖱️ Drag to rotate • Scroll to zoom • Click agent to inspect</span>
+    </div>
+
+    <script src="three-characters.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
