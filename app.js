@@ -18,6 +18,10 @@ let groundPlane;
 let hoveredAgent = null;
 let clock;
 
+// Landmark Interactives
+let energyCube;
+let repairArm = { base: null, segment1: null, segment2: null, joint: null };
+
 // Layout config — workstation positions arranged in zones
 const WORKSTATION_LAYOUTS = [
     // Zone positions [x, z, rotationY] — arranged in a semicircle / office layout
@@ -170,8 +174,8 @@ function setupEnvironment() {
     ring.rotation.x = Math.PI / 2;
     scene.add(ring);
 
-    // Corner structures
-    const corners = [[-12, -12], [12, -12], [-12, 12], [12, 12]];
+    // Corner structures (Keep only the front ones to avoid blocking stations)
+    const corners = [[-12, -12], [12, -12]];
     corners.forEach(([cx, cz]) => {
         const h = 1 + Math.random() * 2;
         const b = new THREE.Mesh(new THREE.BoxGeometry(1.2, h, 1.2), darkMat);
@@ -249,6 +253,83 @@ function setupEnvironment() {
     pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
     const pMat = new THREE.PointsMaterial({ color: 0xf43f5e, size: 0.04, transparent: true, opacity: 0.4 });
     scene.add(new THREE.Points(pGeo, pMat));
+
+    // 1. Charging Station (Cyan)
+    const chargeStation = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.1, 16), new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.1 }));
+    chargeStation.position.set(12, 0.05, 12);
+    scene.add(chargeStation);
+    const chargeLabel = new THREE.PointLight(0x22d3ee, 1.2, 10);
+    chargeLabel.position.set(12, 2.5, 12);
+    scene.add(chargeLabel);
+
+    // Energy Crystal (Octahedron)
+    energyCube = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), new THREE.MeshStandardMaterial({ 
+        color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 2.5, roughness: 0.0, metalness: 1.0, transparent: true, opacity: 0.9
+    }));
+    energyCube.position.set(12, 1.5, 12);
+    scene.add(energyCube);
+    
+    // Holographic Base Rings
+    for (let j = 1; j <= 2; j++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2 + j * 0.1, 0.01, 8, 32), new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.4 / j }));
+        ring.position.set(12, 0.06, 12);
+        ring.rotation.x = Math.PI / 2;
+        scene.add(ring);
+    }
+
+    // 2. Repair Station (Yellow/Orange)
+    const repairStation = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.1, 16), new THREE.MeshBasicMaterial({ color: 0xfb7185, transparent: true, opacity: 0.1 }));
+    repairStation.position.set(-12, 0.05, 12);
+    scene.add(repairStation);
+    const repairLabel = new THREE.PointLight(0xfb7185, 1.2, 10);
+    repairLabel.position.set(-12, 2.5, 12);
+    scene.add(repairLabel);
+    
+    // Holographic Base Rings
+    for (let j = 1; j <= 2; j++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2 + j * 0.1, 0.01, 8, 32), new THREE.MeshBasicMaterial({ color: 0xfb7185, transparent: true, opacity: 0.4 / j }));
+        ring.position.set(-12, 0.06, 12);
+        ring.rotation.x = Math.PI / 2;
+        scene.add(ring);
+    }
+
+    // Robotic Arm
+    const armGroup = new THREE.Group();
+    armGroup.position.set(-13.2, 0, 13.2);
+    
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.9, roughness: 0.1 });
+    const armBase = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.6, 8), armMat);
+    armBase.position.y = 0.3;
+    armGroup.add(armBase);
+    
+    const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.5), armMat);
+    seg1.position.y = 0.75;
+    const joint1 = new THREE.Group();
+    joint1.position.y = 0.55;
+    armGroup.add(joint1);
+    joint1.add(seg1);
+    
+    const seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 1.2), armMat);
+    seg2.position.y = 0.6;
+    const joint2 = new THREE.Group();
+    joint2.position.y = 1.4;
+    joint1.add(joint2);
+    joint2.add(seg2);
+    
+    // Detailed Scanner head
+    const headGroup = new THREE.Group();
+    headGroup.position.y = 1.2;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.4), new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8 }));
+    headGroup.add(head);
+    const laser = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.05), new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.7 }));
+    laser.rotation.x = Math.PI / 2;
+    headGroup.add(laser);
+    joint2.add(headGroup);
+
+    repairArm.base = armGroup;
+    repairArm.segment1 = joint1;
+    repairArm.segment2 = joint2;
+    scene.add(armGroup);
 }
 
 // ============ Workstation Builder ============
@@ -374,17 +455,13 @@ function placeAgentsInWorld() {
         const character = builder(agentColor);
 
         // Position character at chair, FACING the monitor
-        // In workstation local space: chair is at z=0.55, monitor at z=-0.2
-        // Character must face -Z (toward monitor), so local rotation = PI
         const localChairPos = new THREE.Vector3(0, 0, 0.55);
-        // Rotate local position by workstation rotation
         localChairPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), layout.rot);
         character.position.set(
             layout.x + localChairPos.x,
             0.15,
             layout.z + localChairPos.z
         );
-        // Face the monitor: base rotation + PI to look toward -Z in local space
         character.rotation.y = layout.rot + Math.PI;
 
         character.castShadow = true;
@@ -392,10 +469,27 @@ function placeAgentsInWorld() {
             if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
         });
 
+        // Check if agent has active browser
+        const isActive = browserInstances.some(bi => {
+            if (bi.status !== 'running') return false;
+            // Precise match by agent_id
+            if (bi.agent_id && bi.agent_id === agent.id) return true;
+            // Fallback: match by profile name
+            return agent.allowed_profiles && agent.allowed_profiles.includes(bi.profile);
+        });
+
         character.userData.agentId = agent.id;
         character.userData.isAgent = true;
-        // Store base rotation for animation
         character.userData.baseRotY = layout.rot + Math.PI;
+        character.userData.deskPos = character.position.clone();
+        
+        const hubDist = 2.5 + Math.random() * 0.5;
+        const hubAngle = (i / agents.length) * Math.PI * 2;
+        character.userData.hubPos = new THREE.Vector3(Math.sin(hubAngle) * hubDist, 0.15, Math.cos(hubAngle) * hubDist);
+        character.userData.movementState = isActive ? 'WORKING' : 'IDLE';
+        character.userData.lerpFactor = 0;
+        character.userData.stateTimer = 0;
+
         scene.add(character);
 
         // CSS label
@@ -404,15 +498,6 @@ function placeAgentsInWorld() {
         label.innerHTML = `<span class="label-name">${escapeHtml(agent.name)}</span>`;
         label.dataset.name = agent.name;
         document.body.appendChild(label);
-
-        // Check if agent has active browser
-        const isActive = browserInstances.some(bi => {
-            if (bi.status !== 'running') return false;
-            // Precise match by agent_id
-            if (bi.agent_id && bi.agent_id === agent.id) return true;
-            // Fallback: match by profile name if it belongs to agent's allowed_profiles
-            return agent.allowed_profiles && agent.allowed_profiles.includes(bi.profile);
-        });
 
         // Update screen based on activity
         if (isActive) {
@@ -430,6 +515,8 @@ function placeAgentsInWorld() {
             padMat: ws.padMat,
             borderMat: ws.borderMat,
             isActive,
+            browserCount: browserInstances.filter(bi => bi.status === 'running' && (bi.agent_id === agent.id || (agent.allowed_profiles && agent.allowed_profiles.includes(bi.profile)))).length,
+            idleTime: 0,
             layoutIndex: i,
         });
     });
@@ -500,47 +587,181 @@ function animate() {
 
     controls.update();
 
-    // Animate agents — body, head, and ARMS
+    // Animate agents — body, head, and ARMS with state machine
     agentWorkstations.forEach(({ mesh, isActive, layoutIndex }, i) => {
         const phase = i * 0.8;
-        // Idle breathing (seated bob)
-        mesh.position.y = 0.15 + Math.sin(t * 1.5 + phase) * 0.025;
-
+        const state = mesh.userData.movementState || 'IDLE';
+        const deskPos = mesh.userData.deskPos;
+        const hubPos = mesh.userData.hubPos;
         const baseRot = mesh.userData.baseRotY || 0;
 
-        if (isActive) {
-            // Active: slight body sway while typing
-            mesh.rotation.y = baseRot + Math.sin(t * 1.2 + phase) * 0.04;
-        } else {
-            // Idle: occasional look-around
-            mesh.rotation.y = baseRot + Math.sin(t * 0.3 + phase) * 0.15;
+        // State Machine
+        if (state === 'WORKING' || state === 'IDLE' || state === 'AT_STATION' || state === 'OBSERVING') {
+            // Static positions or relative small movements
+            mesh.position.y = 0.15 + Math.sin(t * 1.5 + phase) * 0.025;
+            
+            if (state === 'WORKING') {
+                mesh.rotation.y = baseRot + Math.sin(t * 1.2 + phase) * 0.04;
+                agentWorkstations[i].idleTime = 0;
+            } else if (state === 'IDLE') {
+                mesh.rotation.y = baseRot + Math.sin(t * 0.3 + phase) * 0.15;
+                agentWorkstations[i].idleTime += 0.016; // Approx inc per frame
+                
+                // Trigger transition to random idle behavior after 15-30s
+                if (agentWorkstations[i].idleTime > 15 + Math.random() * 15) {
+                    const rand = Math.random();
+                    if (rand < 0.3) {
+                        mesh.userData.movementState = 'TO_STATION';
+                        mesh.userData.stationType = 'CHARGING';
+                        mesh.userData.lerpFactor = 0;
+                        mesh.userData.startPos = mesh.position.clone();
+                    } else if (rand < 0.6) {
+                        mesh.userData.movementState = 'TO_STATION';
+                        mesh.userData.stationType = 'REPAIR';
+                        mesh.userData.lerpFactor = 0;
+                        mesh.userData.startPos = mesh.position.clone();
+                    } else {
+                        // Find a working colleague to observe
+                        const colleagues = agentWorkstations.filter((ws, idx) => idx !== i && ws.isActive);
+                        if (colleagues.length > 0) {
+                            const targetWs = colleagues[Math.floor(Math.random() * colleagues.length)];
+                            mesh.userData.movementState = 'TO_OBSERVE';
+                            // Position slightly behind and LATERALLY OFFSET (left or right)
+                            const sideOffset = (Math.random() > 0.5 ? 0.8 : -0.8);
+                            const offset = new THREE.Vector3(sideOffset, 0, 1.3).applyAxisAngle(new THREE.Vector3(0, 1, 0), targetWs.workstationGroup.rotation.y);
+                            mesh.userData.targetPos = targetWs.workstationGroup.position.clone().add(offset);
+                            mesh.userData.observeTarget = targetWs.workstationGroup.position;
+                            mesh.userData.lerpFactor = 0;
+                            mesh.userData.startPos = mesh.position.clone();
+                        }
+                    }
+                    agentWorkstations[i].idleTime = 0;
+                }
+            } else if (state === 'AT_STATION') {
+                // Determine rotation: face the center of the station
+                const center = mesh.userData.stationType === 'CHARGING' ? new THREE.Vector3(12, 0.15, 12) : new THREE.Vector3(-12, 0.15, 12);
+                mesh.lookAt(center);
+            } else if (state === 'OBSERVING') {
+                if (mesh.userData.observeTarget) {
+                    const lookTarget = mesh.userData.observeTarget.clone();
+                    lookTarget.y = mesh.position.y;
+                    mesh.lookAt(lookTarget);
+                }
+                // If the observed agent stops working, go back home
+                const colleagues = agentWorkstations.filter((ws, idx) => idx !== i);
+                const stillWorking = colleagues.some(ws => ws.workstationGroup.position.distanceTo(mesh.userData.targetPos) < 2 && ws.isActive);
+                if (!stillWorking && Math.random() < 0.01) {
+                    mesh.userData.movementState = 'TO_DESK';
+                    mesh.userData.lerpFactor = 0;
+                    mesh.userData.startPos = mesh.position.clone();
+                }
+            }
+        } else if (state === 'TO_HUB' || state === 'TO_DESK' || state === 'TO_STATION' || state === 'TO_OBSERVE') {
+            // Movement logic
+            mesh.userData.lerpFactor += 0.008; // Movement speed
+            const f = mesh.userData.lerpFactor;
+            const start = mesh.userData.startPos;
+            
+            // Queue Calculation for STATION
+            let target = deskPos;
+            if (state === 'TO_HUB') target = hubPos;
+            else if (state === 'TO_STATION') {
+                const sType = mesh.userData.stationType;
+                const base = sType === 'CHARGING' ? new THREE.Vector3(12, 0.15, 12) : new THREE.Vector3(-12, 0.15, 12);
+                const dir = sType === 'CHARGING' ? new THREE.Vector3(1, 0, 1) : new THREE.Vector3(-1, 0, 1);
+                
+                // Get queue index
+                const inQueue = agentWorkstations.filter(w => w.mesh.userData.movementState === 'TO_STATION' || w.mesh.userData.movementState === 'AT_STATION')
+                    .filter(w => w.mesh.userData.stationType === sType)
+                    .sort((a, b) => (a.mesh.userData.queueStartTime || 0) - (b.mesh.userData.queueStartTime || 0));
+                
+                const idx = inQueue.findIndex(w => w.mesh === mesh);
+                const qIdx = idx === -1 ? inQueue.length : idx;
+                target = base.clone().add(dir.multiplyScalar(qIdx * 1.5));
+            } else if (state === 'TO_OBSERVE') target = mesh.userData.targetPos;
+            
+            if (start && target) {
+                mesh.position.lerpVectors(start, target, Math.min(f, 1));
+                // Walking bob
+                mesh.position.y = 0.15 + Math.abs(Math.sin(f * 25)) * 0.15;
+                
+                // Look at target
+                const lookTarget = target.clone();
+                lookTarget.y = mesh.position.y;
+                mesh.lookAt(lookTarget);
+            }
+
+            if (f >= 1) {
+                if (state === 'TO_HUB') {
+                    mesh.userData.movementState = 'AT_HUB';
+                    mesh.userData.stateTimer = t + 2; // Pause for 2s
+                } else if (state === 'TO_STATION') {
+                    mesh.userData.movementState = 'AT_STATION';
+                    mesh.userData.queueStartTime = t;
+                    mesh.userData.stateTimer = t + 10 + Math.random() * 15;
+                } else if (state === 'TO_OBSERVE') {
+                    mesh.userData.movementState = 'OBSERVING';
+                } else {
+                    // Reached desk: check if we should start working
+                    const ws = agentWorkstations[i];
+                    if (ws && ws.isActive) {
+                        mesh.userData.movementState = 'WORKING';
+                        const color = resolveColor(ws.agent.avatar_color || 'blue');
+                        setScreenActive(ws.screenMesh, color);
+                        ws.padMat.opacity = 0.1;
+                        ws.borderMat.opacity = 0.18;
+                    } else {
+                        mesh.userData.movementState = 'IDLE';
+                    }
+                    mesh.rotation.y = baseRot;
+                    mesh.position.copy(deskPos);
+                }
+            }
+        } else if (state === 'AT_HUB') {
+            // Receiving mission pause
+            mesh.position.y = 0.15 + Math.sin(t * 1.5 + phase) * 0.025;
+            // Look at central tower
+            const towerPos = new THREE.Vector3(0, 0.15, 0);
+            mesh.lookAt(towerPos);
+
+            if (t > mesh.userData.stateTimer) {
+                mesh.userData.movementState = 'TO_DESK';
+                mesh.userData.lerpFactor = 0;
+                mesh.userData.startPos = mesh.position.clone();
+            }
+        } else if (state === 'AT_STATION') {
+            // Stay at station for a long time (60-120s) or until new mission kicks in
+            if (t > mesh.userData.stateTimer) {
+                mesh.userData.movementState = 'TO_DESK';
+                mesh.userData.lerpFactor = 0;
+                mesh.userData.startPos = mesh.position.clone();
+            }
         }
 
-        // Arm animation
+        // Arm animation logic based on state
         const leftArm = mesh.userData.leftArm;
         const rightArm = mesh.userData.rightArm;
 
         if (leftArm && rightArm) {
-            if (isActive) {
+            if (state === 'WORKING') {
                 // TYPING: arms reach forward, forearms alternate rapid up/down
-                // Upper arms angled forward toward keyboard
                 leftArm.rotation.x = -1.0 + Math.sin(t * 0.5 + phase) * 0.05;
                 rightArm.rotation.x = -1.0 + Math.sin(t * 0.5 + phase + 1) * 0.05;
-
-                // Forearm rapid typing motion (alternating)
                 const leftForearm = leftArm.userData.forearmPivot;
                 const rightForearm = rightArm.userData.forearmPivot;
-                if (leftForearm) {
-                    leftForearm.rotation.x = -0.3 + Math.sin(t * 12 + phase) * 0.15;
-                }
-                if (rightForearm) {
-                    rightForearm.rotation.x = -0.3 + Math.sin(t * 12 + phase + Math.PI) * 0.15;
-                }
+                if (leftForearm) leftForearm.rotation.x = -0.3 + Math.sin(t * 12 + phase) * 0.15;
+                if (rightForearm) rightForearm.rotation.x = -0.3 + Math.sin(t * 12 + phase + Math.PI) * 0.15;
+            } else if (state === 'TO_HUB' || state === 'TO_DESK' || state === 'TO_STATION' || state === 'TO_OBSERVE') {
+                // WALKING: arms swing
+                const swing = Math.sin(mesh.userData.lerpFactor * 40);
+                leftArm.rotation.x = -0.3 + swing * 0.6;
+                rightArm.rotation.x = -0.3 - swing * 0.6;
+                if (leftArm.userData.forearmPivot) leftArm.userData.forearmPivot.rotation.x = -0.4;
+                if (rightArm.userData.forearmPivot) rightArm.userData.forearmPivot.rotation.x = -0.4;
             } else {
-                // IDLE: arms resting on desk, gentle sway
+                // IDLE, AT_HUB, AT_STATION, OBSERVING: arms resting
                 leftArm.rotation.x = -0.7 + Math.sin(t * 0.4 + phase) * 0.05;
                 rightArm.rotation.x = -0.7 + Math.sin(t * 0.4 + phase + 1) * 0.05;
-
                 const leftForearm = leftArm.userData.forearmPivot;
                 const rightForearm = rightArm.userData.forearmPivot;
                 if (leftForearm) leftForearm.rotation.x = -0.5;
@@ -548,6 +769,30 @@ function animate() {
             }
         }
     });
+
+    // Landmark Animations
+    if (energyCube) {
+        energyCube.rotation.y += 0.02;
+        energyCube.rotation.x += 0.01;
+        energyCube.position.y = 1.6 + Math.sin(t * 2) * 0.2;
+    }
+
+    if (repairArm.base) {
+        // Robotic arm logic: move if someone is in repair queue
+        const inRepair = agentWorkstations.filter(w => w.mesh.userData.movementState === 'AT_STATION' && w.mesh.userData.stationType === 'REPAIR')
+            .sort((a, b) => (a.mesh.userData.queueStartTime || 0) - (b.mesh.userData.queueStartTime || 0));
+        
+        if (inRepair.length > 0) {
+            // Animating toward first agent
+            repairArm.segment1.rotation.z = Math.sin(t * 1.5) * 0.4 - 0.3;
+            repairArm.segment2.rotation.z = Math.sin(t * 3) * 0.6 + 0.5;
+            repairArm.base.rotation.y = -Math.PI / 4 + Math.sin(t * 0.5) * 0.2;
+        } else {
+            // Idle arm animation
+            repairArm.segment1.rotation.z = -0.1 + Math.sin(t * 0.5) * 0.05;
+            repairArm.segment2.rotation.z = 0.2 + Math.sin(t * 0.8) * 0.1;
+        }
+    }
 
     // Animate active screens (flicker effect)
     agentWorkstations.forEach(({ screenMesh, isActive, workstationGroup }) => {
@@ -670,8 +915,23 @@ async function api(path, method = 'GET', body = null) {
 async function fetchAgents() {
     try {
         const data = await api('/agents');
-        agents = data.agents || [];
-        placeAgentsInWorld();
+        const newAgents = data.agents || [];
+        
+        // Only re-place if counts or IDs changed
+        const currentIds = agents.map(a => a.id).sort().join(',');
+        const newIds = newAgents.map(a => a.id).sort().join(',');
+        
+        if (currentIds !== newIds || agents.length !== newAgents.length) {
+            agents = newAgents;
+            placeAgentsInWorld();
+        } else {
+            // Just update local objects (in case names/colors changed)
+            agents = newAgents;
+            agentWorkstations.forEach(ws => {
+                const refreshed = agents.find(a => a.id === ws.agent.id);
+                if (refreshed) ws.agent = refreshed;
+            });
+        }
         updateStats();
     } catch (e) {
         showToast('⚠️ ' + e.message, 'error');
@@ -701,20 +961,27 @@ async function fetchBrowserInstances() {
 function updateAgentActivity() {
     agentWorkstations.forEach(ws => {
         const wasActive = ws.isActive;
-        ws.isActive = browserInstances.some(bi => {
+        const lastCount = ws.browserCount || 0;
+        
+        const activeBrowsers = browserInstances.filter(bi => {
             if (bi.status !== 'running') return false;
             // Precise match by agent_id
             if (bi.agent_id && bi.agent_id === ws.agent.id) return true;
             // Fallback: match by profile name
             return ws.agent.allowed_profiles && ws.agent.allowed_profiles.includes(bi.profile);
         });
-        // Update screen if status changed
-        if (ws.isActive && !wasActive) {
-            const color = resolveColor(ws.agent.avatar_color || 'blue');
-            setScreenActive(ws.screenMesh, color);
-            ws.padMat.opacity = 0.1;
-            ws.borderMat.opacity = 0.18;
-        } else if (!ws.isActive && wasActive) {
+
+        ws.isActive = activeBrowsers.length > 0;
+        ws.browserCount = activeBrowsers.length;
+
+        // Update visual status if activity changed OR more browsers added
+        if (ws.browserCount > lastCount) {
+            // TRIGGER MISSION PICKUP SEQUENCE (Go to hub first)
+            ws.mesh.userData.movementState = 'TO_HUB';
+            ws.mesh.userData.lerpFactor = 0;
+            ws.mesh.userData.startPos = ws.mesh.position.clone();
+        } else if (ws.browserCount === 0 && lastCount > 0) {
+            // WORK FINISHED: Turn off screen, but REMAIN where we are (no teleport)
             ws.screenMesh.material.dispose();
             ws.screenMesh.material = new THREE.MeshBasicMaterial({ color: 0x0a1628 });
             ws.padMat.opacity = 0.04;
@@ -722,9 +989,16 @@ function updateAgentActivity() {
             // Remove screen lines
             ws.workstationGroup.traverse(child => {
                 if (child.userData && child.userData.screenLines) {
-                    child.parent.remove(child);
+                    if (child.parent) child.parent.remove(child);
                 }
             });
+            
+            // Transition from WORKING to IDLE seated at desk (if they were there)
+            if (ws.mesh.userData.movementState === 'WORKING') {
+                ws.mesh.userData.movementState = 'IDLE';
+                ws.mesh.position.copy(ws.mesh.userData.deskPos); 
+                ws.mesh.rotation.y = ws.mesh.userData.baseRotY;
+            }
         }
     });
 }
