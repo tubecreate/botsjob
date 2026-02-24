@@ -3,7 +3,20 @@
  * Each agent has its own workstation area with desk, monitor, and activity
  */
 
-const NEXUS_URL = 'http://localhost:5000';
+// Configurable Nexus URL via parameter or localStorage
+let NEXUS_URL = 'https://zero.tubecreate.com/';
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.has('nexus')) {
+    NEXUS_URL = urlParams.get('nexus');
+    localStorage.setItem('botsjob_nexus_url', NEXUS_URL);
+} else if (localStorage.getItem('botsjob_nexus_url')) {
+    NEXUS_URL = localStorage.getItem('botsjob_nexus_url');
+}
+
+// Remove trailing slash if present
+if (NEXUS_URL.endsWith('/')) {
+    NEXUS_URL = NEXUS_URL.slice(0, -1);
+}
 
 // ============ State ============
 let activeServers = [];
@@ -17,6 +30,9 @@ let browserInstances = [];
 let ws;
 const myViewerId = 'viewer-' + Math.random().toString(36).substr(2, 9);
 const otherViewers = new Map(); // id -> Mesh
+
+// Particles
+const sparks = [];
 
 // 3D World
 let scene, camera, renderer, controls;
@@ -94,8 +110,25 @@ function initWorld() {
     }
 
     window.addEventListener('resize', onResize);
-    canvas.addEventListener('click', onWorldClick);
-    canvas.addEventListener('mousemove', onWorldMouseMove);
+    
+    // Use Pointer Events for unified Mouse and Touch support
+    let pointerDownPos = { x: 0, y: 0 };
+    
+    canvas.addEventListener('pointerdown', (e) => {
+        pointerDownPos.x = e.clientX;
+        pointerDownPos.y = e.clientY;
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
+        const dx = e.clientX - pointerDownPos.x;
+        const dy = e.clientY - pointerDownPos.y;
+        // If the pointer moved less than 10 pixels total, count it as a "Click/Tap"
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+            onWorldClick(e);
+        }
+    });
+
+    canvas.addEventListener('pointermove', onWorldMouseMove);
 
     animate();
 }
@@ -514,6 +547,7 @@ function placeAgentsInWorld() {
         character.userData.hubPos = new THREE.Vector3(offsetX + Math.sin(hubAngle) * hubDist, 0.15, Math.cos(hubAngle) * hubDist);
         character.userData.movementState = isActive ? 'WORKING' : 'IDLE';
         character.userData.lerpFactor = 0;
+        character.userData.baseSpeed = 0.004 + Math.random() * 0.002; // Requested speed range
         character.userData.stateTimer = 0;
 
         scene.add(character);
@@ -768,7 +802,25 @@ function animate() {
                 // Determine rotation: face the center of the station
                 const offsetX = serverOffsets.get(mesh.userData.serverId) || 0;
                 const center = mesh.userData.stationType === 'CHARGING' ? new THREE.Vector3(12 + offsetX, 0.15, 12) : new THREE.Vector3(-12 + offsetX, 0.15, 12);
+                center.y = mesh.position.y; // Keep them standing upright!
                 mesh.lookAt(center);
+
+                // Charging VFX (Lightning)
+                if (mesh.userData.stationType === 'CHARGING' && Math.random() < 0.25) { // Frequent flashes
+                    const startY = 0.5 + Math.random() * 1.5;
+                    const angle = Math.random() * Math.PI * 2;
+                    const radius = 0.2 + Math.random() * 0.4; // Spread around the agent body
+                    const lPos = mesh.position.clone().add(new THREE.Vector3(Math.cos(angle)*radius, startY, Math.sin(angle)*radius));
+                    
+                    const height = 1.0 + Math.random() * 2.0;
+                    const thickness = 0.05 + Math.random() * 0.05;
+                    const pMesh = new THREE.Mesh(new THREE.BoxGeometry(thickness, height, thickness), new THREE.MeshBasicMaterial({ color: 0xa5f3fc, transparent: true, opacity: 0.9 }));
+                    pMesh.position.copy(lPos);
+                    pMesh.rotation.x = (Math.random() - 0.5) * (Math.PI / 2);
+                    pMesh.rotation.z = (Math.random() - 0.5) * (Math.PI / 2);
+                    scene.add(pMesh);
+                    sparks.push({ mesh: pMesh, velocity: new THREE.Vector3(), life: 0.4 }); // Flash duration
+                }
             } else if (state === 'OBSERVING') {
                 if (mesh.userData.observeTarget) {
                     const lookTarget = mesh.userData.observeTarget.clone();
@@ -786,7 +838,7 @@ function animate() {
             }
         } else if (state === 'TO_HUB' || state === 'TO_DESK' || state === 'TO_STATION' || state === 'TO_OBSERVE') {
             // Movement logic
-            mesh.userData.lerpFactor += 0.008; // Movement speed
+            mesh.userData.lerpFactor += mesh.userData.baseSpeed || 0.008; // Dynamic movement speed
             const f = mesh.userData.lerpFactor;
             const start = mesh.userData.startPos;
             
@@ -799,14 +851,21 @@ function animate() {
                 const base = sType === 'CHARGING' ? new THREE.Vector3(12 + offsetX, 0.15, 12) : new THREE.Vector3(-12 + offsetX, 0.15, 12);
                 const dir = sType === 'CHARGING' ? new THREE.Vector3(1, 0, 1) : new THREE.Vector3(-1, 0, 1);
                 
-                // Get queue index
                 const inQueue = agentWorkstations.filter(w => w.mesh.userData.serverId === mesh.userData.serverId && (w.mesh.userData.movementState === 'TO_STATION' || w.mesh.userData.movementState === 'AT_STATION'))
                     .filter(w => w.mesh.userData.stationType === sType)
-                    .sort((a, b) => (a.mesh.userData.queueStartTime || 0) - (b.mesh.userData.queueStartTime || 0));
+                    .sort((a, b) => a.layoutIndex - b.layoutIndex); // Stable sort based on their fixed index
                 
                 const idx = inQueue.findIndex(w => w.mesh === mesh);
                 const qIdx = idx === -1 ? inQueue.length : idx;
-                target = base.clone().add(dir.multiplyScalar(qIdx * 1.5));
+                
+                // Distribute agents in a circle around the station pad so they don't overlap
+                if (qIdx === 0) {
+                    target = base.clone(); // First agent gets dead center
+                } else {
+                    const angle = qIdx * ((Math.PI * 2) / 6); // 6 agents around the ring
+                    const ringRadius = 0.9 + Math.floor((qIdx - 1) / 6) * 0.8; // Expand rings if > 7 agents
+                    target = base.clone().add(new THREE.Vector3(Math.cos(angle) * ringRadius, 0, Math.sin(angle) * ringRadius));
+                }
             } else if (state === 'TO_OBSERVE') target = mesh.userData.targetPos;
             
             if (start && target) {
@@ -921,10 +980,31 @@ function animate() {
                 .sort((a, b) => (a.mesh.userData.queueStartTime || 0) - (b.mesh.userData.queueStartTime || 0));
             
             if (inRepair.length > 0) {
-                // Animating toward first agent
-                segment1.rotation.z = Math.sin(t * 1.5) * 0.4 - 0.3;
-                segment2.rotation.z = Math.sin(t * 3) * 0.6 + 0.5;
-                base.rotation.y = -Math.PI / 4 + Math.sin(t * 0.5) * 0.2;
+                // Aim robotic arm at the working agent
+                const targetAgent = inRepair[0].mesh;
+                const targetPos = targetAgent.position.clone();
+                targetPos.y += 0.8; // Target torso
+
+                // Point base at agent
+                const dir = targetPos.clone().sub(base.position).normalize();
+                base.rotation.y = Math.atan2(-dir.z, dir.x) - Math.PI/2;
+                
+                // Bob arm rapidly to simulate "welding/working"
+                segment1.rotation.z = Math.sin(t * 15) * 0.1 - 0.3;
+                segment2.rotation.z = Math.cos(t * 15) * 0.1 + 0.8;
+
+                // Spawning welding sparks from the agent's body (where the arm touches)
+                if (Math.random() < 0.4) {
+                    const sparkPos = targetPos.add(new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3));
+                    const pMesh = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.04), new THREE.MeshBasicMaterial({ color: 0xfef08a }));
+                    pMesh.position.copy(sparkPos);
+                    scene.add(pMesh);
+                    sparks.push({
+                        mesh: pMesh,
+                        velocity: new THREE.Vector3((Math.random()-0.5)*0.1, -Math.random()*0.1, (Math.random()-0.5)*0.1),
+                        life: 1.0
+                    });
+                }
             } else {
                 // Idle arm animation
                 segment1.rotation.z = -0.1 + Math.sin(t * 0.5) * 0.05;
@@ -932,6 +1012,18 @@ function animate() {
             }
         }
     });
+
+    // Update particles (Sparks & Lightning)
+    for (let i = sparks.length - 1; i >= 0; i--) {
+        const p = sparks[i];
+        p.mesh.position.add(p.velocity);
+        p.life -= 0.03;
+        p.mesh.scale.setScalar(Math.max(0.01, p.life));
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            sparks.splice(i, 1);
+        }
+    }
 
     // Animate active screens (flicker effect)
     agentWorkstations.forEach(({ screenMesh, isActive, workstationGroup }) => {
@@ -984,8 +1076,11 @@ function onResize() {
 
 function onWorldClick(event) {
     const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    let clientX = event.clientX;
+    let clientY = event.clientY;
+
+    mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster.setFromCamera(mouse, camera);
 
@@ -1063,34 +1158,17 @@ async function api(path, baseUrl = null, method = 'GET', body = null) {
     }
 }
 
-// ============ Data Fetching ============
-async function fetchServers() {
+// ============ Data Fetching (Nexus Universe Push Model) ============
+async function fetchUniverseState() {
     try {
-        const data = await api('/servers');
-        activeServers = data.servers || [];
-    } catch (e) {
-        showToast('⚠️ Could not connect to Botsjob Nexus Registry', 'error');
-    }
-}
-
-// ============ Data Fetching ============
-async function fetchAgents() {
-    try {
-        let newAgents = [];
-        if (activeServers.length === 0) {
-            try {
-                const data = await api('/agents', 'http://localhost:5295');
-                newAgents = (data.agents || []).map(a => ({ ...a, serverId: 'local' }));
-            } catch (e) {}
-        } else {
-            for (const server of activeServers) {
-                try {
-                    const data = await api('/agents', server.url);
-                    newAgents.push(...(data.agents || []).map(a => ({ ...a, serverId: server.id })));
-                } catch (e) { console.warn(`Agents fetch failed for ${server.name}`); }
-            }
-        }
+        const data = await api('/universe-state');
         
+        // 1. Update Servers
+        activeServers = data.servers || [];
+        updateServerNavigatorUI();
+
+        // 2. Update Agents
+        const newAgents = data.agents || [];
         const currentIds = agents.map(a => a.id).sort().join(',');
         const newIds = newAgents.map(a => a.id).sort().join(',');
         
@@ -1104,56 +1182,28 @@ async function fetchAgents() {
                 if (refreshed) ws.agent = refreshed;
             });
         }
+
+        // 3. Update Missions
+        missions = data.missions || [];
+        renderMissions();
+
+        // 4. Update Browsers
+        browserInstances = data.browsers || [];
+        renderBrowserInstances();
+        
+        // 5. Update Activity & Stats
         updateStats();
+        updateAgentActivity();
+
     } catch (e) {
-        showToast('⚠️ Agent fetch error', 'error');
+        showToast('⚠️ Nexus Disconnected', 'error');
+        document.getElementById('status-dot').className = 'status-dot offline';
+        document.getElementById('status-text').textContent = 'Nexus Disconnected';
+        initWorld();
     }
 }
 
-async function fetchMissions() {
-    try {
-        let newMissions = [];
-        if (activeServers.length === 0) {
-            try {
-                const data = await api('/missions', 'http://localhost:5295');
-                newMissions = (data.missions || []).map(m => ({ ...m, serverId: 'local' }));
-            } catch (e) {}
-        } else {
-            for (const server of activeServers) {
-                try {
-                    const data = await api('/missions', server.url);
-                    newMissions.push(...(data.missions || []).map(m => ({ ...m, serverId: server.id })));
-                } catch (e) {}
-            }
-        }
-        missions = newMissions;
-        renderMissions();
-        updateStats();
-    } catch (e) {}
-}
-
-async function fetchBrowserInstances() {
-    try {
-        let newInstances = [];
-        if (activeServers.length === 0) {
-            try {
-                const data = await api('/browser/list', 'http://localhost:5295');
-                newInstances = (data.instances || []).map(i => ({ ...i, serverId: 'local' }));
-            } catch (e) {}
-        } else {
-            for (const server of activeServers) {
-                try {
-                    const data = await api('/browser/list', server.url);
-                    newInstances.push(...(data.instances || []).map(i => ({ ...i, serverId: server.id })));
-                } catch (e) {}
-            }
-        }
-        browserInstances = newInstances;
-        renderBrowserInstances();
-        updateStats();
-        updateAgentActivity();
-    } catch (e) {}
-}
+// Polling handled in DOMContentLoaded
 
 function updateAgentActivity() {
     agentWorkstations.forEach(ws => {
@@ -1331,6 +1381,64 @@ function switchTab(btn, tabId) {
 }
 function toggleSidebar() { document.getElementById('hud-sidebar').classList.toggle('collapsed'); }
 
+// ============ Server Navigator (Observer Mode) ============
+function toggleServerDropdown() {
+    document.getElementById('server-dropdown').classList.toggle('open');
+}
+
+function updateServerNavigatorUI() {
+    const nav = document.getElementById('server-navigator');
+    const dropdown = document.getElementById('server-dropdown');
+    
+    if (activeServers.length > 0) {
+        nav.style.display = 'flex';
+    } else {
+        nav.style.display = 'none';
+        return;
+    }
+    
+    dropdown.innerHTML = '';
+    
+    const allView = document.createElement('div');
+    allView.className = 'server-entry';
+    allView.innerHTML = `<span>🌍 All Servers</span>`;
+    allView.onclick = () => jumpToServer('all');
+    dropdown.appendChild(allView);
+
+    activeServers.forEach(server => {
+        const entry = document.createElement('div');
+        entry.className = 'server-entry';
+        entry.innerHTML = `<span>🏢 ${server.name}</span>`;
+        entry.onclick = () => jumpToServer(server.id);
+        dropdown.appendChild(entry);
+    });
+}
+
+function jumpToServer(serverId) {
+    document.getElementById('server-dropdown').classList.remove('open');
+    if (!serverId || serverId === 'all') {
+        document.getElementById('current-server-label').textContent = '🌍 All Servers View';
+        controls.target.x = 0;
+        camera.position.x = 14;
+        return;
+    }
+    
+    const server = activeServers.find(s => s.id === serverId);
+    if (!server) return;
+    
+    document.getElementById('current-server-label').textContent = `🏢 ${server.name}`;
+    const targetX = serverOffsets.get(serverId) || 0;
+    
+    controls.target.x = targetX;
+    camera.position.x = targetX + 14;
+}
+
+function jumpToRandomServer() {
+    if (activeServers.length === 0) return;
+    const randomServer = activeServers[Math.floor(Math.random() * activeServers.length)];
+    jumpToServer(randomServer.id);
+}
+
 // ============ Actions ============
 function getServerUrl(serverId) {
     if (serverId === 'local') return 'http://localhost:5295';
@@ -1405,14 +1513,24 @@ async function checkHealth() {
 
 // ============ Init ============
 document.addEventListener('DOMContentLoaded', async () => {
-    await fetchServers();
+    // Pre-fetch servers before building the 3D world so it can draw all buildings
+    try {
+        const data = await api('/universe-state');
+        activeServers = data.servers || [];
+    } catch (e) {
+        console.warn("Initial universe state fetch failed", e);
+    }
+
     initWorld();
     initMultiplayer();
-    await checkHealth();
-    await refreshAll();
     
-    // Fast polling for active browsers
-    setInterval(async () => { await fetchBrowserInstances(); await checkHealth(); }, 2000);
-    // Slow polling for full refresh
-    setInterval(async () => { await fetchServers(); await refreshAll(); }, 30000);
+    // Initial fetch to place agents
+    await fetchUniverseState();
+    await checkHealth();
+    
+    // Polling interval
+    setInterval(async () => {
+        await fetchUniverseState();
+        await checkHealth();
+    }, 2000);
 });

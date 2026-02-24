@@ -174,6 +174,80 @@ body {
     gap: 8px;
 }
 
+/* ============ Server Navigator (Bottom Left) ============ */
+.server-navigator {
+    position: absolute;
+    bottom: 40px;
+    left: 20px;
+    width: 260px;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.server-list-btn {
+    width: 100%;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: rgba(40, 45, 70, 0.8);
+    border: 1px solid var(--accent);
+    color: var(--text-primary);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.server-list-btn:hover {
+    background: rgba(244, 63, 94, 0.2);
+    box-shadow: 0 0 10px rgba(244, 63, 94, 0.2);
+}
+
+.server-dropdown {
+    display: none;
+    flex-direction: column;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    max-height: 180px;
+    overflow-y: auto;
+    width: 100%;
+}
+.server-dropdown.open { display: flex; }
+
+.server-entry {
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--text-primary);
+    cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.server-entry:hover { background: rgba(255,255,255,0.05); color: var(--accent); }
+
+.btn-random-server {
+    background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+    border: none;
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(244, 63, 94, 0.3);
+    transition: transform 0.2s;
+    text-align: center;
+}
+.btn-random-server:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(244, 63, 94, 0.4); }
+.btn-random-server:active { transform: translateY(0); }
+
 .sidebar-toggle {
     display: none; /* Show on mobile */
     cursor: pointer;
@@ -424,6 +498,7 @@ body {
 .toast-info { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
 
 @media (max-width: 768px) {
-    .hud-sidebar { width: 220px; }
+    .hud-sidebar { display: none; }
+    .hud-bottom-hint { display: none; }
     .hud-stats { display: none; }
 }

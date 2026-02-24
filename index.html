@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BotJob — 3D Agent World</title>
     <meta name="description" content="Multi-agent management in a 3D game world">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=1.1">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
@@ -58,6 +58,17 @@
                     <div class="panel-body" id="missions-list"></div>
                 </div>
             </div>
+        </div>
+        <!-- Server Navigator (Bottom Left) -->
+        <div class="server-navigator" id="server-navigator" style="display:none;">
+            <button class="server-list-btn" onclick="toggleServerDropdown()">
+                <span id="current-server-label">🌍 All Servers View</span>
+                <span>▼</span>
+            </button>
+            <div class="server-dropdown" id="server-dropdown">
+                <!-- Populated via JS -->
+            </div>
+            <button class="btn-random-server" onclick="jumpToRandomServer()">🎲 Jump to Random Server</button>
         </div>
     </div>
 
