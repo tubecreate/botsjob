@@ -26,6 +26,19 @@
                 </div>
             </div>
             <div class="hud-stats">
+                <!-- User Profile -->
+                <div id="user-profile-container" style="display: none; position: relative; margin-right: 15px; z-index: 1000;">
+                    <div class="user-profile" style="position: relative; cursor: pointer; display: flex; align-items: center;" onclick="toggleUserDropdown()">
+                        <div class="avatar-circle" style="width: 32px; height: 32px; background: #3b82f6; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">
+                            <span id="user-avatar-initial">U</span>
+                        </div>
+                        <div class="profile-dropdown-menu" id="user-dropdown" style="display: none; position: absolute; right: 0; top: 100%; margin-top: 8px; background: #1c1f32; border: 1px solid #2d3250; border-radius: 6px; padding: 8px; min-width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+                            <div id="dropdown-email" style="font-size: 13px; padding: 8px; border-bottom: 1px solid #2d3250; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></div>
+                            <button onclick="logoutUser()" style="width: 100%; margin-top: 8px; padding: 8px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px;">Logout</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="stat-chip"><span class="stat-label">Agents</span><span class="stat-val" id="stat-agents">0</span></div>
                 <div class="stat-chip"><span class="stat-label">Missions</span><span class="stat-val" id="stat-missions">0</span></div>
                 <div class="stat-chip active-stat"><span class="stat-label">Active</span><span class="stat-val" id="stat-active">0</span></div>
@@ -75,6 +88,50 @@
     <!-- Agent Detail Modal -->
     <div class="modal-overlay" id="agent-modal" onclick="if(event.target===this) closeModal()">
         <div class="modal-dialog" id="modal-content"></div>
+    </div>
+
+    <!-- Login Dialog Modal -->
+    <div class="modal-overlay" id="login-modal" onclick="if(event.target===this) closeLoginDialog()">
+        <div class="modal-dialog" style="width: 400px; padding: 24px; background: #1c1f32; border-radius: 12px; border: 1px solid #2d3250;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                <h2 id="auth-title" style="margin: 0; color: white; font-size: 20px;">Welcome Back!</h2>
+                <button onclick="closeLoginDialog()" style="background: transparent; border: none; color: #888; font-size: 18px; cursor: pointer;">✕</button>
+            </div>
+            
+            <p id="auth-subtitle" style="margin: 0 0 24px 0; color: #888; font-size: 14px;">Please sign-in to chat with Agents.</p>
+            
+            <div id="login-error-msg" style="display: none; padding: 10px; background: rgba(220,53,69,0.2); color: #ff6b6b; border: 1px solid rgba(220,53,69,0.3); border-radius: 8px; margin-bottom: 20px; font-size: 14px;"></div>
+            
+            <div id="register-fields-top" style="display: none; margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; color: #e2e8f0; font-size: 14px;">Full Name</label>
+                <input type="text" id="register-name" placeholder="John Doe" style="width: 100%; padding: 10px; background: #0a0c10; border: 1px solid #2d3250; color: white; border-radius: 6px; outline: none; box-sizing: border-box; font-family: inherit; margin-bottom: 16px;">
+
+                <label style="display: block; margin-bottom: 8px; color: #e2e8f0; font-size: 14px;">Username</label>
+                <input type="text" id="register-username" placeholder="johndoe123" style="width: 100%; padding: 10px; background: #0a0c10; border: 1px solid #2d3250; color: white; border-radius: 6px; outline: none; box-sizing: border-box; font-family: inherit;">
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; color: #e2e8f0; font-size: 14px;">Email</label>
+                <input type="email" id="login-email" placeholder="admin@tubecreate.com" style="width: 100%; padding: 10px; background: #0a0c10; border: 1px solid #2d3250; color: white; border-radius: 6px; outline: none; box-sizing: border-box; font-family: inherit;">
+            </div>
+            
+            <div style="margin-bottom: 24px;">
+                <label style="display: block; margin-bottom: 8px; color: #e2e8f0; font-size: 14px;">Password</label>
+                <input type="password" id="login-password" placeholder="••••••••" style="width: 100%; padding: 10px; background: #0a0c10; border: 1px solid #2d3250; color: white; border-radius: 6px; outline: none; box-sizing: border-box; font-family: inherit;">
+            </div>
+
+            <div id="register-fields-bottom" style="display: none; margin-bottom: 24px;">
+                <label style="display: block; margin-bottom: 8px; color: #e2e8f0; font-size: 14px;">Confirm Password</label>
+                <input type="password" id="register-confirm-password" placeholder="••••••••" style="width: 100%; padding: 10px; background: #0a0c10; border: 1px solid #2d3250; color: white; border-radius: 6px; outline: none; box-sizing: border-box; font-family: inherit;">
+            </div>
+            
+            <button id="login-submit-btn" onclick="handleAuthSubmit()" style="width: 100%; padding: 12px; background: #3b82f6; border: none; color: white; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; font-family: inherit; transition: background 0.2s; margin-bottom: 16px;">Login</button>
+
+            <div style="text-align: center; font-size: 13px; color: #888;">
+                <span id="auth-toggle-text">Don't have an account?</span> 
+                <a href="#" onclick="toggleAuthMode(event)" id="auth-toggle-link" style="color: #3b82f6; text-decoration: none; font-weight: 600;">Sign up here</a>
+            </div>
+        </div>
     </div>
 
     <!-- Toast Notifications -->

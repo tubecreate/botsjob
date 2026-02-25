@@ -26,6 +26,24 @@ let agents = [];
 let missions = [];
 let browserInstances = [];
 
+// ==========================================
+// NEW CONFIG
+// ==========================================
+let agentsData = [];
+let onlineAgents = new Set();
+let wsTokens = new Map(); // Store WS tokens for specific modules
+let pendingMissions = [];
+let currentServerType = null;
+let currentBrowserProcessId = null;
+
+// User Identity & Flow Variables
+let currentUserToken = localStorage.getItem('user_token');
+let currentUserObjStr = localStorage.getItem('current_user');
+let currentUser = currentUserObjStr ? JSON.parse(currentUserObjStr) : null;
+let pendingChatAgentId = null;
+let pendingChatMessage = null;
+let pendingChatSkillId = null;
+
 // ============ Multiplayer (WebSockets) ============
 let ws;
 const myViewerId = 'viewer-' + Math.random().toString(36).substr(2, 9);
@@ -1140,6 +1158,68 @@ function onWorldMouseMove(event) {
     hoveredAgent = null;
 }
 
+// Add these new User Profile functions
+function toggleUserDropdown() {
+    const dropdown = document.getElementById('user-dropdown');
+    if (dropdown) {
+        if (dropdown.style.display === 'none') {
+            dropdown.style.display = 'block';
+        } else {
+            dropdown.style.display = 'none';
+        }
+    }
+}
+
+// Close dropdown if click outside
+window.addEventListener('click', function(e) {
+    const profile = document.querySelector('.user-profile');
+    const dropdown = document.getElementById('user-dropdown');
+    if (dropdown && profile && !profile.contains(e.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
+function logoutUser() {
+    currentUserToken = null;
+    currentUser = null;
+    localStorage.removeItem('user_token');
+    localStorage.removeItem('current_user');
+    updateAuthUI();
+    showToast('Logged out successfully', 'info');
+}
+
+function updateAuthUI() {
+    const profileContainer = document.getElementById('user-profile-container');
+    const avatarInitial = document.getElementById('user-avatar-initial');
+    const dropdownEmail = document.getElementById('dropdown-email');
+
+    if (currentUserToken) { // Changed to show if token exists, even without currentUser
+        if (profileContainer) profileContainer.style.display = 'block';
+        
+        let initial = 'U';
+        let subText = 'User';
+
+        if (currentUser) {
+            if (currentUser.name) {
+                initial = currentUser.name.charAt(0).toUpperCase();
+            } else if (currentUser.email) {
+                initial = currentUser.email.charAt(0).toUpperCase();
+            } else if (currentUser.username) {
+                initial = currentUser.username.charAt(0).toUpperCase();
+            }
+            subText = currentUser.email || currentUser.username || 'User';
+        }
+        
+        if (avatarInitial) avatarInitial.textContent = initial;
+        if (dropdownEmail) dropdownEmail.textContent = subText;
+    } else {
+        if (profileContainer) profileContainer.style.display = 'none';
+    }
+}
+
+// Initial UI Update
+updateAuthUI();
+
 // ============ API Layer ============
 async function api(path, baseUrl = null, method = 'GET', body = null) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
@@ -1334,6 +1414,7 @@ function openAgentDetail(agentId) {
             <button class="tab active" onclick="switchTab(this,'tab-overview')">Overview</button>
             <button class="tab" onclick="switchTab(this,'tab-persona')">Persona</button>
             <button class="tab" onclick="switchTab(this,'tab-config')">Config</button>
+            <button class="tab" onclick="switchTab(this,'tab-chat')">Chat</button>
         </div>
         <div id="tab-overview" class="tab-panel active">
             <div class="detail-grid">
@@ -1361,6 +1442,22 @@ function openAgentDetail(agentId) {
             </div>
             <div class="detail-section"><h4>Proxy Provider</h4><pre class="code-block">${JSON.stringify(agent.proxy_provider || {}, null, 2)}</pre></div>
         </div>
+        <div id="tab-chat" class="tab-panel" style="display: none; flex-direction: column; height: 400px;">
+            <div id="chat-messages" style="flex: 1; overflow-y: auto; padding: 10px; background: #0a0c10; border-radius: 8px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="color: #888; text-align: center; font-size: 12px; margin-bottom: 10px;">Chat initialized with ${escapeHtml(agent.name)}</div>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <select id="chat-skill-select" style="background: #1c1f32; border: 1px solid #2d3250; color: white; padding: 8px; border-radius: 4px; font-size: 14px;">
+                    <option value="">AI Conversation</option>
+                    <option value="browser_search">Sử dụng Trình duyệt</option>
+                    ${agent.allowed_skills && agent.allowed_skills.length > 0 ? 
+                        agent.allowed_skills.map(skill_id => `<option value="${skill_id}">Run Skill: ${skill_id}</option>`).join('') 
+                        : '<option value="" disabled>No skills allowed</option>'}
+                </select>
+                <input type="text" id="chat-input" placeholder="Type a message or skill parameter..." style="flex: 1; background: #1c1f32; border: 1px solid #2d3250; color: white; padding: 10px; border-radius: 4px; font-size: 14px;" onkeypress="if(event.key === 'Enter') sendChatMessage('${agent.id}')">
+                <button class="btn btn-primary" onclick="sendChatMessage('${agent.id}')" style="padding: 10px 20px;">Send</button>
+            </div>
+        </div>
         <div class="modal-footer">
             <button class="btn btn-danger" onclick="deleteAgent('${agent.id}')">Delete Agent</button>
         </div>`;
@@ -1376,8 +1473,20 @@ function closeModal() { document.getElementById('agent-modal').classList.remove(
 function switchTab(btn, tabId) {
     btn.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    document.getElementById(tabId).classList.add('active');
+    
+    // Custom logic to handle display:flex for chat tab vs block for others
+    document.querySelectorAll('.tab-panel').forEach(p => {
+        p.classList.remove('active');
+        if (p.id === 'tab-chat') {
+            p.style.display = 'none';
+        }
+    });
+    
+    const targetPanel = document.getElementById(tabId);
+    targetPanel.classList.add('active');
+    if (tabId === 'tab-chat') {
+        targetPanel.style.display = 'flex';
+    }
 }
 function toggleSidebar() { document.getElementById('hud-sidebar').classList.toggle('collapsed'); }
 
@@ -1444,6 +1553,418 @@ function getServerUrl(serverId) {
     if (serverId === 'local') return 'http://localhost:5295';
     const server = activeServers.find(s => s.id === serverId);
     return server ? server.url : null;
+}
+
+// ============ Login Auth Flow ============
+
+let isRegisterMode = false;
+
+function showLoginDialog() {
+    const overlay = document.getElementById('login-modal');
+    if (overlay) {
+        overlay.classList.add('open');
+        document.getElementById('login-email').value = '';
+        document.getElementById('login-password').value = '';
+        if(document.getElementById('register-name')) document.getElementById('register-name').value = '';
+        if(document.getElementById('register-username')) document.getElementById('register-username').value = '';
+        if(document.getElementById('register-confirm-password')) document.getElementById('register-confirm-password').value = '';
+        document.getElementById('login-error-msg').style.display = 'none';
+        
+        // Reset to login mode if closed
+        if(isRegisterMode) toggleAuthMode(null, false);
+        
+        // Focus email if empty, otherwise password
+        setTimeout(() => {
+            const emailInput = document.getElementById('login-email');
+            if(emailInput.value) document.getElementById('login-password').focus();
+            else emailInput.focus();
+        }, 50);
+    }
+}
+
+function closeLoginDialog() {
+    const overlay = document.getElementById('login-modal');
+    if (overlay) overlay.classList.remove('open');
+    pendingChatAgentId = null;
+    pendingChatMessage = null;
+    pendingChatSkillId = null;
+}
+
+// ============ Agent Chat Functionality (WebSocket Streaming) ============
+let activeChatSockets = {}; // Manage active sockets to prevent overlap per agent
+
+async function sendChatMessage(agentId, retryText = null, retrySkill = null) {
+    const input = document.getElementById('chat-input');
+    const skillSelect = document.getElementById('chat-skill-select');
+    const messages = document.getElementById('chat-messages');
+    
+    const text = retryText !== null ? retryText : input.value.trim();
+    const skillId = retrySkill !== null ? retrySkill : skillSelect.value;
+    
+    if (!text && !skillId) return;
+
+    // Auth Check
+    const urlParams = new URLSearchParams(window.location.search);
+    if (!currentUserToken && !urlParams.get('token')) {
+        pendingChatAgentId = agentId;
+        pendingChatMessage = text;
+        pendingChatSkillId = skillId;
+        showLoginDialog();
+        return;
+    }
+
+    if (retryText === null) {
+        input.value = '';
+    }
+
+    // Add User Message UI
+    const userMsg = document.createElement('div');
+    userMsg.className = 'chat-message user-message';
+    userMsg.innerHTML = `<div class="message-bubble">${escapeHtml(text)}</div>`;
+    messages.appendChild(userMsg);
+    messages.scrollTop = messages.scrollHeight;
+
+    const agent = agents.find(a => a.id === agentId);
+    if (!agent) {
+        console.error("Agent not found for chat:", agentId);
+        return;
+    }
+
+    const serverUrl = getServerUrl(agent.serverId);
+    if (!serverUrl) {
+        showToast('Server offline', 'error');
+        return;
+    }
+
+    // Close any existing socket for this agent
+    if (activeChatSockets[agentId]) {
+        activeChatSockets[agentId].close();
+        delete activeChatSockets[agentId];
+    }
+
+    const agentMsg = document.createElement('div');
+    agentMsg.className = 'chat-message agent-message';
+    agentMsg.innerHTML = `<div class="message-bubble agent-typing"><span></span><span></span><span></span></div>`;
+    messages.appendChild(agentMsg);
+    messages.scrollTop = messages.scrollHeight;
+
+    try {
+        const serverUrlObj = new URL(serverUrl);
+        serverUrlObj.protocol = serverUrlObj.protocol === 'https:' ? 'wss:' : 'ws:';
+        if (!serverUrlObj.pathname.endsWith('/')) {
+            serverUrlObj.pathname += '/';
+        }
+        serverUrlObj.pathname += 'api/v1/ws/chat';
+
+        // Pass the token along if it exists in the URL setting or from the current dashboard URL
+        let dashParams = new URLSearchParams(window.location.search);
+        let dashToken = dashParams.get('token') || currentUserToken;
+        if (dashToken && !serverUrlObj.searchParams.has('token')) {
+             serverUrlObj.searchParams.set('token', dashToken);
+        }
+
+        let wsUrl = serverUrlObj.toString();
+        let autoPrepend = "";
+        let payload;
+        
+        let baseSystemPrompt = agent.system_prompt || "You are a helpful assistant.";
+        if (agent.routine) {
+            let r = agent.routine;
+            let pLines = ["--- AI PERSONA CONFIGURATION ---"];
+            if (r.name) pLines.push(`Identity/Name: ${r.name}`);
+            if (r.role) pLines.push(`Role/Profession: ${r.role}`);
+            if (r.description) pLines.push(`Background: ${r.description}`);
+            if (r.tone) pLines.push(`Speaking Tone: ${r.tone}`);
+            if (r.personality && Array.isArray(r.personality.traits) && r.personality.traits.length > 0) {
+                pLines.push(`Personality Traits: ${r.personality.traits.join(', ')}`);
+            }
+            pLines.push("\nCRITICAL INSTRUCTIONS:");
+            pLines.push("1. You must strictly embody this persona, role, and tone in all your responses.");
+            pLines.push("2. Automatically adopt the language (e.g. Vietnamese, English) implied by the persona's background and tone.");
+            pLines.push("3. NEVER break character. Stay helpful but within your defined personality bounds.");
+            
+            baseSystemPrompt = pLines.join('\n') + `\n\n--- ADDITIONAL INSTRUCTIONS ---\n${baseSystemPrompt}`;
+        }
+
+        if (skillId === 'browser_search') {
+            payload = {
+                model: agent.model || 'gpt-3.5-turbo',
+                use_browser_search: true,
+                messages: [
+                    { role: "system", content: baseSystemPrompt },
+                    { role: "user", content: text }
+                ]
+            };
+        } else if (skillId) {
+            autoPrepend = `Notice: triggering Python workflows directly from JS browser via WebSockets. `;
+            payload = {
+                model: agent.model || 'gpt-3.5-turbo',
+                messages: [
+                    { role: "system", content: "You are a helpful assistant. User requested to trigger a skill. Reply ONLY with: TRIGGER_SKILL: " + skillId + " " + text }
+                ]
+            };
+        } else {
+            payload = {
+                model: agent.model || 'gpt-3.5-turbo',
+                messages: [
+                    { role: "system", content: baseSystemPrompt },
+                    { role: "user", content: text }
+                ]
+            };
+        }
+
+        const ws = new WebSocket(wsUrl);
+        activeChatSockets[agentId] = ws;
+
+        let fullResponse = '';
+        let agentTypingIndicator = agentMsg.querySelector('.agent-typing');
+        
+        // Add autoPrepend header instantly if skill
+        if (autoPrepend && agentTypingIndicator) {
+            agentMsg.innerHTML = `<div class="message-bubble"><span style='color: #888; font-size: 0.9em'>${autoPrepend}</span><br/><br/><span class="agent-typing active"><span></span><span></span><span></span></span></div>`;
+            agentTypingIndicator = agentMsg.querySelector('.agent-typing');
+        }
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify(payload));
+            if (agentTypingIndicator) agentTypingIndicator.classList.add('active');
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'token') {
+                fullResponse += data.content;
+                let renderStr = escapeHtml(fullResponse).replace(/\n/g, '<br/>');
+                if (agentTypingIndicator) {
+                    agentTypingIndicator.classList.remove('agent-typing');
+                    agentTypingIndicator.classList.remove('active');
+                    agentTypingIndicator.classList.add('message-content-span');
+                }
+                
+                const contentSpan = agentMsg.querySelector('.message-content-span') || agentMsg.querySelector('.message-bubble');
+                if (autoPrepend) {
+                    contentSpan.innerHTML = `<span style='color: #888; font-size: 0.9em'>${autoPrepend}</span><br/><br/>${renderStr}<span class="typing-cursor">▌</span>`;
+                } else {
+                    contentSpan.innerHTML = `${renderStr}<span class="typing-cursor">▌</span>`;
+                }
+                messages.scrollTop = messages.scrollHeight;
+            } else if (data.type === 'error') {
+                console.error("Agent chat error:", data.message || data.content);
+                const contentSpan = agentMsg.querySelector('.message-bubble');
+                if (contentSpan) {
+                     contentSpan.classList.add('error-message');
+                     contentSpan.innerHTML = `Error: ${escapeHtml(data.message || data.content || "Unknown Error")}`;
+                }
+                messages.scrollTop = messages.scrollHeight;
+                ws.close();
+            } else if (data.type === 'done') {
+                ws.close();
+            }
+        };
+
+        ws.onclose = () => {
+            const contentSpan = agentMsg.querySelector('.message-content-span') || agentMsg.querySelector('.message-bubble');
+            if (contentSpan) {
+                // Remove cursor
+                let finalStr = escapeHtml(fullResponse).replace(/\n/g, '<br/>');
+                if (autoPrepend) {
+                    contentSpan.innerHTML = `<span style='color: #888; font-size: 0.9em'>${autoPrepend}</span><br/><br/>${finalStr}`;
+                } else {
+                    contentSpan.innerHTML = finalStr;
+                }
+                if (!fullResponse && !contentSpan.innerHTML.includes('Error')) {
+                     contentSpan.innerHTML += "<span style='color: #ef4444'> Connection closed without response</span>";
+                }
+            }
+            delete activeChatSockets[agentId];
+            messages.scrollTop = messages.scrollHeight;
+        };
+
+        ws.onerror = (error) => {
+            console.error("Agent chat WebSocket error:", error);
+            if (agentTypingIndicator) {
+                agentTypingIndicator.classList.remove('agent-typing');
+                agentTypingIndicator.classList.remove('active');
+                agentTypingIndicator.classList.add('message-bubble');
+                agentTypingIndicator.classList.add('error-message');
+                agentTypingIndicator.textContent = fullResponse || "Connection error.";
+            } else {
+                agentMsg.innerHTML = `<div class="message-bubble error-message">Connection error.</div>`;
+            }
+            messages.scrollTop = messages.scrollHeight;
+            ws.close();
+        };
+
+    } catch (e) {
+        console.error("Failed to establish chat WebSocket:", e);
+        const errorMsg = agentMsg.querySelector('.message-bubble');
+        if (errorMsg) {
+            errorMsg.classList.remove('agent-typing');
+            errorMsg.classList.add('error-message');
+            errorMsg.textContent = `Failed to start chat: ${e.message}`;
+        }
+        messages.scrollTop = messages.scrollHeight;
+    }
+}
+
+function toggleAuthMode(event, forceMode = null) {
+    if (event) event.preventDefault();
+    if (forceMode !== null) {
+        isRegisterMode = forceMode;
+    } else {
+        isRegisterMode = !isRegisterMode;
+    }
+
+    const title = document.getElementById('auth-title');
+    const subtitle = document.getElementById('auth-subtitle');
+    const submitBtn = document.getElementById('login-submit-btn');
+    const registerFieldsTop = document.getElementById('register-fields-top');
+    const registerFieldsBottom = document.getElementById('register-fields-bottom');
+    const toggleText = document.getElementById('auth-toggle-text');
+    const toggleLink = document.getElementById('auth-toggle-link');
+    const errorBox = document.getElementById('login-error-msg');
+    
+    errorBox.style.display = 'none';
+
+    if (isRegisterMode) {
+        title.textContent = 'Create an Account';
+        subtitle.textContent = 'Sign up to start chatting with Agents.';
+        submitBtn.textContent = 'Sign Up';
+        if(registerFieldsTop) registerFieldsTop.style.display = 'block';
+        if(registerFieldsBottom) registerFieldsBottom.style.display = 'block';
+        toggleText.textContent = 'Already have an account?';
+        toggleLink.textContent = 'Login here';
+    } else {
+        title.textContent = 'Welcome Back!';
+        subtitle.textContent = 'Please sign-in to chat with Agents.';
+        submitBtn.textContent = 'Login';
+        if(registerFieldsTop) registerFieldsTop.style.display = 'none';
+        if(registerFieldsBottom) registerFieldsBottom.style.display = 'none';
+        toggleText.textContent = "Don't have an account?";
+        toggleLink.textContent = 'Sign up here';
+    }
+}
+
+async function handleAuthSubmit() {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const errorBox = document.getElementById('login-error-msg');
+    const btn = document.getElementById('login-submit-btn');
+    
+    let name = '';
+    let username = '';
+
+    if (!email || !password) {
+        errorBox.textContent = "Please enter email and password";
+        errorBox.style.display = 'block';
+        return;
+    }
+
+    if (isRegisterMode) {
+        name = document.getElementById('register-name').value;
+        username = document.getElementById('register-username').value;
+        const confirmPassword = document.getElementById('register-confirm-password').value;
+        
+        if (!name || !username) {
+            errorBox.textContent = "Please fill in all fields (Name, Username)";
+            errorBox.style.display = 'block';
+            return;
+        }
+
+        if (password !== confirmPassword) {
+            errorBox.textContent = "Passwords do not match";
+            errorBox.style.display = 'block';
+            return;
+        }
+    }
+    
+    errorBox.style.display = 'none';
+    btn.textContent = isRegisterMode ? "Signing up..." : "Logging in...";
+    btn.disabled = true;
+    
+    try {
+        let apiUrl = 'https://api.tubecreate.com/api/user/validate-user.php';
+        let payload = { email, password };
+
+        if (isRegisterMode) {
+            apiUrl = 'https://api.tubecreate.com/api/user/create-user.php'; 
+            payload = {
+                name: name,
+                username: username,
+                email: email,
+                password: password,
+                auto_verify: true
+            };
+        }
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        const data = await response.json();
+        
+        // Sometimes APIs return 200 OK but with success: false in body
+        if (response.ok && (data.token || data.status === 'success' || data.success)) {
+            // Save Token
+            currentUserToken = data.token;
+            if (currentUserToken) localStorage.setItem('user_token', currentUserToken);
+            
+            // Build and Save User Object
+            const userObj = {
+                name: data.name || name || '',
+                username: data.username || username || '',
+                email: email
+            };
+            if(data.user) {
+                Object.assign(userObj, data.user);
+            }
+            currentUser = userObj;
+            localStorage.setItem('current_user', JSON.stringify(currentUser));
+
+            // Clean up UI
+            closeLoginDialog();
+            updateAuthUI();
+            showToast('Login successful!', 'success');
+
+            // Resume chat if we had a pending one
+            if (pendingChatAgentId && pendingChatMessage) {
+                const agent = agents.find(a => a.id === pendingChatAgentId);
+                const msg = pendingChatMessage;
+                const skill = pendingChatSkillId;
+                
+                // Clear pending status
+                pendingChatAgentId = null;
+                pendingChatMessage = null;
+                pendingChatSkillId = null;
+
+                // Send chat
+                sendChatMessage(agent, msg, skill);
+            }
+        } else if (response.ok && (data.success || data.status === 'success') && !data.token) {
+            // If registered successful but no token returned, auto login
+            showToast('Account created successfully! Logging in...', 'success');
+            isRegisterMode = false;
+            // set fields up for login
+            document.getElementById('login-email').value = email;
+            document.getElementById('login-password').value = password;
+            handleAuthSubmit(); // Call again as Login
+        } else {
+            throw new Error(data.message || data.error || (isRegisterMode ? 'Registration failed' : 'Invalid email or password'));
+        }
+    } catch(err) {
+        // Fallback catch if the API returns 404 (doesn't exist)
+        if (err.message.includes('Unexpected token') || err.message.includes('fetch')) {
+            errorBox.textContent = 'API Error: The registration endpoint might be different than expected.';
+        } else {
+            errorBox.textContent = err.message;
+        }
+        errorBox.style.display = 'block';
+    } finally {
+        btn.textContent = isRegisterMode ? "Sign Up" : "Login";
+        btn.disabled = false;
+    }
 }
 
 async function deleteAgent(agentId) {
