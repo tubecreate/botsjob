@@ -1399,6 +1399,35 @@ function openAgentDetail(agentId) {
 
     const modal = document.getElementById('agent-modal');
     const content = document.getElementById('modal-content');
+
+    // Check for public tunnel
+    let hasPublicTunnel = false;
+    let sId = agent.serverId || agent.server_id;
+    
+    // Fallback: If sId is missing, check if there's only one server or infer from browser instances
+    if (!sId) {
+        if (activeServers.length === 1) {
+            sId = activeServers[0].id;
+        } else {
+            const bi = browserInstances.find(b => b.agent_id === agent.id);
+            if (bi) sId = bi.serverId;
+        }
+    }
+    
+    const serverUrl = getServerUrl(sId);
+    if (serverUrl) {
+        try {
+            const u = new URL(serverUrl);
+            const hn = u.hostname;
+            // Treat as public tunnel if it's not a local IPv4/hostname
+            if (hn !== 'localhost' && hn !== '127.0.0.1' && !hn.startsWith('192.168.') && !hn.startsWith('10.') && !hn.startsWith('172.')) {
+                hasPublicTunnel = true;
+            }
+        } catch(e) {}
+    }
+
+    const chatTabButton = hasPublicTunnel ? `<button class="tab" onclick="switchTab(this,'tab-chat')">Chat</button>` : '';
+
     content.innerHTML = `
         <div class="modal-header">
             <div class="modal-header-left">
@@ -1414,7 +1443,7 @@ function openAgentDetail(agentId) {
             <button class="tab active" onclick="switchTab(this,'tab-overview')">Overview</button>
             <button class="tab" onclick="switchTab(this,'tab-persona')">Persona</button>
             <button class="tab" onclick="switchTab(this,'tab-config')">Config</button>
-            <button class="tab" onclick="switchTab(this,'tab-chat')">Chat</button>
+            ${chatTabButton}
         </div>
         <div id="tab-overview" class="tab-panel active">
             <div class="detail-grid">
@@ -1551,6 +1580,10 @@ function jumpToRandomServer() {
 // ============ Actions ============
 function getServerUrl(serverId) {
     if (serverId === 'local') return 'http://localhost:5295';
+    if (!serverId) {
+        if (activeServers.length === 1) return activeServers[0].url;
+        return null;
+    }
     const server = activeServers.find(s => s.id === serverId);
     return server ? server.url : null;
 }
@@ -1630,7 +1663,15 @@ async function sendChatMessage(agentId, retryText = null, retrySkill = null) {
         return;
     }
 
-    const serverUrl = getServerUrl(agent.serverId);
+    let sId = agent.serverId || agent.server_id;
+    if (!sId) {
+        if (activeServers.length === 1) sId = activeServers[0].id;
+        else {
+            const bi = browserInstances.find(b => b.agent_id === agent.id);
+            if (bi) sId = bi.serverId;
+        }
+    }
+    const serverUrl = getServerUrl(sId);
     if (!serverUrl) {
         showToast('Server offline', 'error');
         return;
